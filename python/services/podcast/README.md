@@ -9,7 +9,9 @@ Generates a two-speaker script with **Google Gemini** and audio with **gTTS** + 
   If you stay on **3.13 or newer**, `requirements.txt` pulls in **`audioop-lts`** automatically (stdlib `audioop` was removed; without it, pydub fails with `No module named 'audioop'` / `pyaudioop`).
 - **ffmpeg** and **ffprobe** (same install; both must be runnable). Add the folder that contains `ffmpeg.exe` to **PATH**, then **restart the terminal** (and your IDE if it launched Python).  
   - Windows: `winget install ffmpeg` or `choco install ffmpeg`, or download a **full** build from [ffmpeg.org](https://ffmpeg.org/) (not ffmpeg.exe alone).  
-  - If PATH still fails, set **`ACADOMI_FFMPEG`** in `.env` to either the full path of **`ffmpeg.exe`** or the **`bin`** folder that contains both **`ffmpeg.exe`** and **`ffprobe.exe`** (WinGet installs usually match the latter).
+  - If PATH still fails, set **`ACADOMI_FFMPEG`** in `.env` to **`ffmpeg.exe`** or that **`bin`** folder. In `.env` use **forward slashes** (`C:/Users/...`) so python-dotenv does not treat `\\U` as an escape.  
+  - With no `ACADOMI_FFMPEG`, Windows may **auto-detect** FFmpeg under `%LOCALAPPDATA%\\Microsoft\\WinGet\\Packages\\*ffmpeg*`.  
+  - Check **`GET http://127.0.0.1:5001/health`** — the `ffmpeg` field shows whether the binaries run. **Gemini is only called after** FFmpeg checks pass (no wasted API usage).
 - **`GEMINI_API_KEY` in `backend/.env`** when you use the Acadomi API (the server forwards it to this service). Put the key in **this folder’s `.env` only** if you run `python app.py` standalone without the Node proxy.
 
 ## Setup

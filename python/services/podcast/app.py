@@ -10,7 +10,7 @@ import traceback
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 
-from podcast_logic import build_podcast_payload
+from podcast_logic import build_podcast_payload, ensure_pydub_ffmpeg
 
 # Load .env from this service directory (works no matter the shell cwd)
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -23,7 +23,20 @@ app = Flask(__name__)
 
 @app.get("/health")
 def health():
-    return jsonify({"ok": True, "service": "acadomi-podcast"})
+    ffmpeg_ok = True
+    ffmpeg_error: str | None = None
+    try:
+        ensure_pydub_ffmpeg()
+    except Exception as e:
+        ffmpeg_ok = False
+        ffmpeg_error = str(e)
+    return jsonify(
+        {
+            "ok": True,
+            "service": "acadomi-podcast",
+            "ffmpeg": {"ok": ffmpeg_ok, "error": ffmpeg_error},
+        }
+    )
 
 
 @app.post("/generate-podcast")

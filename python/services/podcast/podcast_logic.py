@@ -14,9 +14,14 @@ from typing import Any
 
 import google.generativeai as genai
 import pydub.utils as pydub_utils
+from dotenv import load_dotenv
 from gtts import gTTS
 from pydub import AudioSegment
 from pydub.utils import which
+
+_SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Ensure podcast .env is applied when this module loads (before any request).
+load_dotenv(os.path.join(_SERVICE_DIR, ".env"))
 
 _ORIGINAL_GET_PROBER_NAME = pydub_utils.get_prober_name
 _PYDUB_FFMPEG_READY = False
@@ -24,10 +29,66 @@ _PYDUB_FFMPEG_READY = False
 
 def _ffmpeg_hint() -> str:
     return (
-        "Install FFmpeg (both ffmpeg and ffprobe), add their folder to PATH and restart the terminal, "
-        "or set ACADOMI_FFMPEG to either the full path of ffmpeg.exe OR the folder that contains "
-        "ffmpeg.exe and ffprobe.exe (WinGet installs are often …\\bin). On Windows: winget install ffmpeg."
+        "Install FFmpeg (ffmpeg + ffprobe). On Windows: add WinGet’s …\\bin to PATH, or set "
+        "ACADOMI_FFMPEG in python/services/podcast/.env to that bin folder OR to ffmpeg.exe. "
+        "Use forward slashes in .env (C:/Users/...) — backslashes can break python-dotenv (\\U…). "
+        "winget install ffmpeg"
     )
+
+
+def _ffmpeg_path_variants(raw: str) -> list[str]:
+    """python-dotenv mangles Windows paths like C:\\Users (\\U…); try sane alternatives."""
+    s = raw.strip().strip('"').strip("'")
+    if not s:
+        return []
+    s = os.path.expandvars(s)
+    candidates = [s, os.path.normpath(s)]
+    if os.name == "nt":
+        if "/" in s:
+            candidates.append(os.path.normpath(s.replace("/", "\\")))
+        if "\\" in s:
+            candidates.append(os.path.normpath(s.replace("\\", "/")))
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in candidates:
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def _discover_winget_ffmpeg_dir() -> str | None:
+    """Find a directory that contains ffmpeg.exe and ffprobe.exe under WinGet packages."""
+    if os.name != "nt":
+        return None
+    local = os.environ.get("LOCALAPPDATA") or os.path.expandvars(r"%LOCALAPPDATA%")
+    packages = os.path.join(local, "Microsoft", "WinGet", "Packages")
+    if not os.path.isdir(packages):
+        return None
+    try:
+        for entry in os.scandir(packages):
+            if not entry.is_dir():
+                continue
+            el = entry.name.lower()
+            if "ffmpeg" not in el:
+                continue
+            try:
+                for root, _, files in os.walk(entry.path):
+                    if "ffmpeg.exe" in files and "ffprobe.exe" in files:
+                        return root
+            except OSError:
+                continue
+    except OSError:
+        return None
+    return None
+
+
+def _parse_ffmpeg_env_with_variants(raw: str) -> tuple[str | None, str | None]:
+    for cand in _ffmpeg_path_variants(raw):
+        ff, fp = _parse_acadomi_ffmpeg_env(cand)
+        if ff or fp:
+            return ff, fp
+    return None, None
 
 
 def _exe_in_dir(directory: str, stem: str) -> str | None:
@@ -69,6 +130,14 @@ def _parse_acadomi_ffprobe_env(value: str) -> str | None:
     return None
 
 
+def _parse_ffprobe_env_with_variants(raw: str) -> str | None:
+    for cand in _ffmpeg_path_variants(raw):
+        p = _parse_acadomi_ffprobe_env(cand)
+        if p:
+            return p
+    return None
+
+
 def _same_dir_exe(ffmpeg_path: str, name: str) -> str | None:
     d = os.path.dirname(os.path.abspath(ffmpeg_path))
     if os.name == "nt" and not name.endswith(".exe"):
@@ -105,29 +174,36 @@ def ensure_pydub_ffmpeg() -> None:
     if _PYDUB_FFMPEG_READY:
         return
 
+    load_dotenv(os.path.join(_SERVICE_DIR, ".env"), override=True)
+
     env_ff = (
         os.environ.get("ACADOMI_FFMPEG")
         or os.environ.get("FFMPEG_BINARY")
         or os.environ.get("FFMPEG_PATH")
         or ""
-    ).strip().strip('"')
+    ).strip().strip('"').strip("'")
     env_fp = (
         os.environ.get("ACADOMI_FFPROBE")
         or os.environ.get("FFPROBE_BINARY")
         or os.environ.get("FFPROBE_PATH")
         or ""
-    ).strip().strip('"')
+    ).strip().strip('"').strip("'")
 
     ff_path: str | None = None
     fp_path: str | None = None
     if env_ff:
-        ff_path, fp_path = _parse_acadomi_ffmpeg_env(env_ff)
+        ff_path, fp_path = _parse_ffmpeg_env_with_variants(env_ff)
     if env_fp:
-        fp_only = _parse_acadomi_ffprobe_env(env_fp)
+        fp_only = _parse_ffprobe_env_with_variants(env_fp)
         if fp_only:
             fp_path = fp_only
             if not ff_path:
                 ff_path = _same_dir_exe(fp_only, "ffmpeg")
+
+    if not ff_path and not fp_path:
+        discovered = _discover_winget_ffmpeg_dir()
+        if discovered:
+            ff_path, fp_path = _parse_acadomi_ffmpeg_env(discovered)
 
     if not ff_path:
         w = which("ffmpeg") or shutil.which("ffmpeg")
@@ -304,6 +380,8 @@ def build_podcast_payload(
     gemini_api_key: str | None = None,
     gemini_model: str | None = None,
 ) -> dict[str, Any]:
+    # Fail fast before Gemini (no wasted API calls if audio pipeline cannot run).
+    ensure_pydub_ffmpeg()
     script = generate_script_from_gemini(
         source_text,
         gemini_api_key=gemini_api_key,
