@@ -3,11 +3,41 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from collections import deque
 
 import cv2
 import numpy as np
+
+# Official mediapipe wheels target 3.9–3.12. Newer interpreters often install a stub or fail
+# to ship `mediapipe.solutions`, which causes confusing ImportErrors.
+_MAX_MEDIAPIPE_PY = (3, 12)
+
+
+def _require_mediapipe_supported_python() -> None:
+    if sys.version_info[:2] > _MAX_MEDIAPIPE_PY:
+        v = f"{sys.version_info.major}.{sys.version_info.minor}"
+        raise ImportError(
+            f"Focus detection needs Python 3.10–3.12 (you are on {v}). "
+            "Google's mediapipe package does not provide FaceMesh for Python 3.13+ yet. "
+            "Windows: cd python/services/tutor && py -3.12 -m venv .venv && .\\.venv\\Scripts\\activate "
+            "&& pip install -r requirements.txt && python -m uvicorn app:app --host 127.0.0.1 --port 5002"
+        )
+
+
+def _mediapipe_solutions_removed() -> bool:
+    """MediaPipe 0.10.30+ wheels no longer ship mediapipe.solutions (FaceMesh)."""
+    try:
+        import mediapipe as mp
+
+        v = getattr(mp, "__version__", "0")
+        parts = [int(x) for x in v.split(".")[:3]]
+        if len(parts) < 3:
+            return False
+        return tuple(parts) >= (0, 10, 30)
+    except ImportError:
+        return False
 
 
 def _ensure_mediapipe_face_mesh():
@@ -16,22 +46,32 @@ def _ensure_mediapipe_face_mesh():
     (some installs expose a broken top-level module). Also detect a local
     mediapipe.py shadowing the real package.
     """
+    _require_mediapipe_supported_python()
+
     here = os.path.dirname(os.path.abspath(__file__))
     shadow = os.path.join(here, "mediapipe.py")
     if os.path.isfile(shadow):
         raise ImportError(
             "File python/services/tutor/mediapipe.py shadows the real 'mediapipe' package. "
-            "Rename or remove it, then reinstall: pip install 'mediapipe>=0.10.14,<0.11'"
+            "Rename or remove it, then reinstall: pip install 'mediapipe>=0.10.21,<0.10.30'"
         )
+
     try:
         from mediapipe.solutions import face_mesh as face_mesh_module
     except ImportError:
         try:
             from mediapipe.python.solutions import face_mesh as face_mesh_module
         except ImportError as e:
+            if _mediapipe_solutions_removed():
+                import mediapipe as mp
+
+                raise ImportError(
+                    f"mediapipe {mp.__version__} removed mediapipe.solutions (FaceMesh). "
+                    "Downgrade: pip install 'mediapipe>=0.10.21,<0.10.30'"
+                ) from e
             raise ImportError(
-                "Could not import mediapipe FaceMesh. Fix: pip uninstall mediapipe -y && "
-                "pip install 'mediapipe>=0.10.14,<0.11' (use Python 3.10–3.12 for best wheel support)."
+                "mediapipe FaceMesh is missing (wrong Python version or incomplete install). "
+                "Use Python 3.10–3.12 and pip install -r requirements.txt (pins mediapipe<0.10.30)."
             ) from e
     if not hasattr(face_mesh_module, "FaceMesh"):
         raise ImportError("mediapipe face_mesh module has no FaceMesh — broken install.")
@@ -54,6 +94,11 @@ class FocusTracker:
     YAW_TOLERANCE = 20.0
     EAR_BLINK_THRESH = 0.03
     EAR_DROP_THRESH = 0.04
+    # Below baseline EAR: sustained narrowing → treat as drowsy / eyes closing (distracted).
+    EAR_DROWSY_THRESH = 0.017
+    DROWSY_HOLD_SEC = 0.85
+    HEAVY_EYE_FRAC = 0.78
+    HEAVY_EYE_HOLD_SEC = 0.4
     SLEEP_LIMIT = 15.0
     HEAD_DOWN_LIMIT = 15.0
 
@@ -99,6 +144,8 @@ class FocusTracker:
 
         self.head_down_start_time: float | None = None
         self.eyes_closed_start_time: float | None = None
+        self._drowsy_eye_start: float | None = None
+        self._heavy_eye_start: float | None = None
 
     def _get_head_pose(self, landmarks, img_w: int, img_h: int) -> tuple[float, float, float]:
         face_3d = np.array(
@@ -218,12 +265,39 @@ class FocusTracker:
         delta_yaw = abs(yaw - self.baseline_yaw)
         delta_ear = self.baseline_ear - ear
 
+        # Drowsy / eyes closing: sustained lower EAR than baseline (not just a quick blink).
+        if delta_ear > self.EAR_DROWSY_THRESH:
+            if self._drowsy_eye_start is None:
+                self._drowsy_eye_start = now
+        else:
+            self._drowsy_eye_start = None
+
+        heavy_thresh = self.EAR_DROP_THRESH * self.HEAVY_EYE_FRAC
+        if delta_ear > heavy_thresh:
+            if self._heavy_eye_start is None:
+                self._heavy_eye_start = now
+        else:
+            self._heavy_eye_start = None
+
+        drowsy_long = (
+            self._drowsy_eye_start is not None and (now - self._drowsy_eye_start) >= self.DROWSY_HOLD_SEC
+        )
+        heavy_long = (
+            self._heavy_eye_start is not None and (now - self._heavy_eye_start) >= self.HEAVY_EYE_HOLD_SEC
+        )
+        sleepy_distracted = drowsy_long or heavy_long
+
         pose_score = 1.0 if (delta_pitch < self.PITCH_TOLERANCE and delta_yaw < self.YAW_TOLERANCE) else 0.0
         eye_score = 1.0 if delta_ear < self.EAR_DROP_THRESH else 0.0
         gaze_score = self._get_iris_gaze_score(lm)
 
         focus_val = pose_score * self.W_POSE + eye_score * self.W_EYES + gaze_score * self.W_GAZE
         alarm_reason: str | None = None
+
+        if sleepy_distracted:
+            eye_score = 0.0
+            focus_val = pose_score * self.W_POSE + gaze_score * self.W_GAZE
+            focus_val = min(focus_val, 0.38)
 
         if delta_ear > self.EAR_DROP_THRESH:
             if self.eyes_closed_start_time is None:
@@ -252,6 +326,9 @@ class FocusTracker:
             self.focus_history.clear()
             self.focus_history.append(0.0)
             avg_focus = 0.0
+        elif sleepy_distracted:
+            status, alarm_trigger = "DISTRACTED", False
+            avg_focus = int(min(float(avg_focus), 48.0))
         elif avg_focus > 75:
             status, alarm_trigger = "FOCUSED", False
         elif avg_focus > 40:
