@@ -31,7 +31,13 @@ const AuthContext = React.createContext<
   refresh: async () => {},
 });
 
-const protectedPrefixes = ["/dashboard", "/settings", "/upload", "/podcast"];
+const protectedPrefixes = [
+  "/dashboard",
+  "/settings",
+  "/upload",
+  "/podcast",
+  "/role-reversal",
+];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<UserDTO | null>(null);

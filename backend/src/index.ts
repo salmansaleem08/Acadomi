@@ -8,6 +8,7 @@ import mongoose from "mongoose";
 
 import authRoutes from "./routes/auth.js";
 import podcastRoutes from "./routes/podcasts.js";
+import roleReversalRoutes from "./routes/roleReversal.js";
 import uploadRoutes from "./routes/uploads.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +51,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/podcasts", podcastRoutes);
+app.use("/api/role-reversal", roleReversalRoutes);
 
 async function start() {
   if (MONGODB_URI) {

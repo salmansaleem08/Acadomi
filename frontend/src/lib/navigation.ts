@@ -16,6 +16,7 @@ export const platformNav = {
     { href: "/focus", label: "Focus detection" },
     { href: "/teach-ai", label: "Teach the AI" },
     { href: "/podcast", label: "Podcast mode" },
+    { href: "/role-reversal", label: "Role reversal teaching" },
   ],
   social: [{ href: "/friends", label: "Friends & study buddies" }],
 } as const;

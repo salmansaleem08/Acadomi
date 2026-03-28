@@ -208,3 +208,73 @@ export async function apiFetchPodcastAudioBlobUrl(
   const blob = await res.blob();
   return URL.createObjectURL(blob);
 }
+
+export type RoleReversalVisualHintsDTO = {
+  radar?: { label: string; value: number }[];
+  barCompare?: { label: string; you: number; ideal: number }[];
+};
+
+export type RoleReversalEvaluationDTO = {
+  scoreClarity: number;
+  scoreConcepts: number;
+  scoreFluency: number;
+  totalScore: number;
+  feedback: string;
+  topicUnderstanding: string;
+  weakness: string;
+  strength: string;
+  visualHints?: RoleReversalVisualHintsDTO;
+};
+
+export type RoleReversalSessionDTO = {
+  id: string;
+  topic: string;
+  sourceUploadId: string;
+  transcript: string;
+  attemptCount: number;
+  evaluation: RoleReversalEvaluationDTO;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function apiListRoleReversalSessions(
+  token: string,
+): Promise<{ sessions: RoleReversalSessionDTO[]; maxSessions: number }> {
+  const res = await fetch(`${API_BASE}/api/role-reversal`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiEvaluateRoleReversal(
+  token: string,
+  params: {
+    topic: string;
+    uploadId: string;
+    audio: Blob;
+    sessionId?: string;
+  },
+): Promise<{ session: RoleReversalSessionDTO }> {
+  const fd = new FormData();
+  fd.append("topic", params.topic);
+  fd.append("uploadId", params.uploadId);
+  fd.append("audio", params.audio, "explanation.webm");
+  if (params.sessionId) fd.append("sessionId", params.sessionId);
+  const res = await fetch(`${API_BASE}/api/role-reversal/evaluate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  return parseJson(res);
+}
+
+export async function apiDeleteRoleReversalSession(
+  token: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/api/role-reversal/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}

@@ -82,6 +82,7 @@ From the repo root (after the venv exists): `npm run dev:podcast`. The Node API 
 - **Auth:** Register, login (JWT in `localStorage`), profile & password on **Settings**.
 - **Uploads (max 7 per user):** PDF (text via `pdf-parse`), images & audio via **Gemini**; optional prompt; stored extracted text + Gemini “processed notes” in MongoDB.
 - **Podcast mode:** Pick a **completed** upload; backend calls the Python service (Gemini script + gTTS), stores **MP3 in MongoDB GridFS**, lists **Your podcasts** with replay and delete.
+- **Role reversal teaching:** Pick a topic + **completed** upload, **record** your explanation; Gemini transcribes, compares to your material, returns **scores + radar/bar charts + feedback**; saved in MongoDB; **Improve** re-records and updates the same session.
 - **Navigation:** Dashboard, Uploads, Podcast mode, Settings, and platform roadmap links.
 
 ## Production build
