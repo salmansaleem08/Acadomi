@@ -460,11 +460,16 @@ export default function TutorPage() {
     }
   }
 
-  function pauseLectureForQuestion() {
+  function pausePlaybackForQuestion() {
     const a = audioRef.current;
+    if (!a || a.ended) return;
+    if (audioRoleRef.current === "answer") {
+      a.pause();
+      cancelSubtitleRaf();
+      return;
+    }
     const s = activeSessionRef.current;
-    if (!a || !s || audioRoleRef.current !== "slide" || playingSlideRef.current === null) return;
-    if (a.ended) return;
+    if (!s || audioRoleRef.current !== "slide" || playingSlideRef.current === null) return;
     const idx = playingSlideRef.current;
     const key = `${s.id}:${idx}`;
     narrationProgressRef.current[key] = a.currentTime;
@@ -658,7 +663,7 @@ export default function TutorPage() {
       return;
     }
     setError(null);
-    pauseLectureForQuestion();
+    pausePlaybackForQuestion();
     setLastQa(null);
     recordChunksRef.current = [];
     stopQuestionMicStream();
