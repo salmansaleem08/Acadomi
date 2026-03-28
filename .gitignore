@@ -50,8 +50,8 @@ pip-wheel-metadata/
 *.h5
 *.ckpt
 *.safetensors
-models/
-checkpoints/
+/models/
+/checkpoints/
 data/raw/
 
 # Logs and debug
