@@ -130,3 +130,36 @@ body {
   background: var(--primary);
   color: var(--primary-foreground);
 }
+
+/* Podcast player volume (cross-browser thumb) */
+.podcast-volume::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--muted);
+}
+.podcast-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px;
+  border-radius: 9999px;
+  background: var(--primary);
+  border: 2px solid var(--background);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  cursor: pointer;
+}
+.podcast-volume::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--muted);
+}
+.podcast-volume::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--primary);
+  border: 2px solid var(--background);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  cursor: pointer;
+}

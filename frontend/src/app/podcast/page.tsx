@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Headphones, Loader2, Mic2, Trash2 } from "lucide-react";
 
 import { MarketingHeader } from "@/components/marketing-header";
+import { PodcastAudioPlayer } from "@/components/podcast-audio-player";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -293,12 +294,7 @@ export default function PodcastPage() {
                         {open ? (
                           <div className="space-y-3 border-t border-border px-3 py-3 sm:px-4">
                             {audioUrls[p.id] ? (
-                              <audio
-                                className="w-full"
-                                controls
-                                src={audioUrls[p.id]}
-                                preload="metadata"
-                              />
+                              <PodcastAudioPlayer src={audioUrls[p.id]} />
                             ) : (
                               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Loader2 className="size-4 animate-spin" />
