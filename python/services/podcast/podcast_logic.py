@@ -7,18 +7,112 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 from typing import Any
 
 import google.generativeai as genai
+import pydub.utils as pydub_utils
 from gtts import gTTS
 from pydub import AudioSegment
 from pydub.utils import which
 
-# Help pydub find ffmpeg (Windows / PATH)
-_ff = which("ffmpeg") or "ffmpeg"
-AudioSegment.converter = _ff
-AudioSegment.ffmpeg = _ff
+_ORIGINAL_GET_PROBER_NAME = pydub_utils.get_prober_name
+_PYDUB_FFMPEG_READY = False
+
+
+def _ffmpeg_hint() -> str:
+    return (
+        "Install FFmpeg (both ffmpeg and ffprobe), add the folder that contains ffmpeg.exe to your user PATH, "
+        "and restart the terminal. Or set ACADOMI_FFMPEG to the full path of ffmpeg.exe "
+        "(ffprobe.exe is usually in the same folder). On Windows: winget install ffmpeg."
+    )
+
+
+def _same_dir_exe(ffmpeg_path: str, name: str) -> str | None:
+    d = os.path.dirname(os.path.abspath(ffmpeg_path))
+    if os.name == "nt" and not name.endswith(".exe"):
+        name = name + ".exe"
+    p = os.path.join(d, name)
+    return p if os.path.isfile(p) else None
+
+
+def _can_spawn(cmd: object) -> bool:
+    if cmd is None:
+        return False
+    exe = str(cmd)
+    try:
+        kwargs: dict[str, Any] = {
+            "args": [exe, "-version"],
+            "capture_output": True,
+            "timeout": 10,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+        r = subprocess.run(**kwargs, check=False)
+        return r.returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def ensure_pydub_ffmpeg() -> None:
+    """
+    pydub's mediainfo uses ffprobe by name; on Windows it often is not on PATH while ffmpeg is,
+    or neither is found. We point converter at ffmpeg and patch get_prober_name to use ffprobe
+    next to ffmpeg or explicit env paths.
+    """
+    global _PYDUB_FFMPEG_READY
+    if _PYDUB_FFMPEG_READY:
+        return
+
+    env_ff = (
+        os.environ.get("ACADOMI_FFMPEG")
+        or os.environ.get("FFMPEG_BINARY")
+        or os.environ.get("FFMPEG_PATH")
+        or ""
+    ).strip().strip('"')
+    env_fp = (
+        os.environ.get("ACADOMI_FFPROBE")
+        or os.environ.get("FFPROBE_BINARY")
+        or os.environ.get("FFPROBE_PATH")
+        or ""
+    ).strip().strip('"')
+
+    ffmpeg = env_ff or which("ffmpeg") or shutil.which("ffmpeg")
+    ffprobe = env_fp or which("ffprobe") or shutil.which("ffprobe")
+
+    ff_path = ffmpeg if ffmpeg and os.path.isfile(ffmpeg) else None
+    fp_path = ffprobe if ffprobe and os.path.isfile(ffprobe) else None
+    if ff_path and not fp_path:
+        fp_path = _same_dir_exe(ff_path, "ffprobe")
+    if fp_path and not ff_path:
+        ff_path = _same_dir_exe(fp_path, "ffmpeg")
+
+    if ff_path:
+        AudioSegment.converter = ff_path
+        AudioSegment.ffmpeg = ff_path
+
+    probe_path = fp_path
+
+    def get_prober_name_patched() -> str:
+        if probe_path:
+            return probe_path
+        return _ORIGINAL_GET_PROBER_NAME()
+
+    pydub_utils.get_prober_name = get_prober_name_patched  # type: ignore[assignment]
+
+    prober = pydub_utils.get_prober_name()
+    if not _can_spawn(prober):
+        raise RuntimeError(
+            f"Cannot run ffprobe ({prober!r}). {_ffmpeg_hint()}"
+        )
+    if not _can_spawn(AudioSegment.converter):
+        raise RuntimeError(
+            f"Cannot run ffmpeg ({AudioSegment.converter!r}). {_ffmpeg_hint()}"
+        )
+
+    _PYDUB_FFMPEG_READY = True
 
 
 def _configure_gemini(
@@ -107,6 +201,7 @@ JSON array only:"""
 
 def create_podcast_mp3_bytes(script: list[dict[str, str]]) -> tuple[bytes, int]:
     """Returns (mp3_bytes, approximate_duration_ms)."""
+    ensure_pydub_ffmpeg()
     segments: list[AudioSegment] = []
     tmpdir = tempfile.mkdtemp(prefix="acadomi_pod_")
     try:

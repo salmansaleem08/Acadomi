@@ -103,6 +103,7 @@ docker compose up -d
 - **Browser console `chrome-extension://invalid`:** comes from a browser extension, not Acadomi — safe to ignore.
 - **`ERR_CONNECTION_REFUSED` to port 4000:** the API is not running; start the backend with `npm run dev:backend`.
 - **`JWT_SECRET not set` or auth returns 500:** add `JWT_SECRET=...` to `backend/.env`. The API reads it **on each request** (not at import time) so it stays in sync after `dotenv` loads. Check `/health` — `jwt` should be `"configured"`.
+- **Podcast service `WinError 2` / ffprobe not found:** install a full **FFmpeg** build (includes **ffprobe**), add its `bin` folder to PATH, and restart the terminal. Or set **`ACADOMI_FFMPEG`** in `python/services/podcast/.env` to the full path of `ffmpeg.exe` (see `python/services/podcast/README.md`).
 
 ## Security
 
