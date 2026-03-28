@@ -9,6 +9,7 @@ import {
   GraduationCap,
   Loader2,
   Mic,
+  Plus,
   Play,
   ScanEye,
   Square,
@@ -31,6 +32,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import {
+  apiCreateConceptBookmark,
   apiCreateTutorSession,
   apiDeleteTutorSession,
   apiFetchTutorSlideAudioBlobUrl,
@@ -88,6 +90,9 @@ export default function TutorPage() {
   const [loadingLists, setLoadingLists] = React.useState(true);
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [bookmarkSaving, setBookmarkSaving] = React.useState<"narration" | "qa_answer" | null>(null);
+  const [bookmarkNotice, setBookmarkNotice] = React.useState<string | null>(null);
+  const bookmarkErrorTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [camOn, setCamOn] = React.useState(false);
   const [focus, setFocus] = React.useState<TutorFocusDTO | null>(null);
@@ -192,6 +197,7 @@ export default function TutorPage() {
       Object.values(narrationUrlsRef.current).forEach((u) => URL.revokeObjectURL(u));
       const au = answerBlobUrlRef.current;
       if (au) URL.revokeObjectURL(au);
+      if (bookmarkErrorTimerRef.current) clearTimeout(bookmarkErrorTimerRef.current);
     };
   }, []);
 
@@ -486,6 +492,61 @@ export default function TutorPage() {
   }
 
   const slide = activeSession?.slides[slideIndex];
+
+  const saveBookmarkFromSubtitle = React.useCallback(
+    async (source: "narration" | "qa_answer") => {
+      if (!activeSession) return;
+      let lineText = "";
+      if (source === "narration") {
+        if (eli5ForSlideIndex === slideIndex && eli5Script?.trim()) {
+          lineText = eli5Script.trim();
+        } else {
+          lineText = (slide?.script ?? "").trim();
+        }
+      } else {
+        lineText = (lastQa?.answer ?? "").trim();
+      }
+      if (!lineText) return;
+      const t = getToken();
+      if (!t) return;
+      setBookmarkNotice(null);
+      if (bookmarkErrorTimerRef.current) {
+        clearTimeout(bookmarkErrorTimerRef.current);
+        bookmarkErrorTimerRef.current = null;
+      }
+      setError(null);
+      setBookmarkSaving(source);
+      try {
+        await apiCreateConceptBookmark(t, {
+          sourceUploadId: activeSession.sourceUploadId,
+          lineText,
+          tutorSessionId: activeSession.id,
+          slideIndex,
+          slideTitle: slide?.title ?? "",
+          subtitleSource: source,
+        });
+        setBookmarkNotice("Saved to Bookmarks — view under Bookmarks in the header.");
+        window.setTimeout(() => setBookmarkNotice(null), 3200);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Could not save bookmark.";
+        setError(msg);
+        if (/already bookmarked/i.test(msg)) {
+          bookmarkErrorTimerRef.current = setTimeout(() => {
+            setError((cur) => (cur === msg ? null : cur));
+            bookmarkErrorTimerRef.current = null;
+          }, 4200);
+        }
+      } finally {
+        setBookmarkSaving(null);
+      }
+    },
+    [activeSession, slideIndex, slide?.title, eli5ForSlideIndex, eli5Script, lastQa],
+  );
+
+  const narrationBookmarkText =
+    eli5ForSlideIndex === slideIndex && eli5Script?.trim()
+      ? eli5Script.trim()
+      : (slide?.script ?? "").trim();
 
   function clearAudioHandlers() {
     cancelSubtitleRaf();
@@ -1060,6 +1121,13 @@ export default function TutorPage() {
           </Alert>
         ) : null}
 
+        {bookmarkNotice ? (
+          <Alert className="border-primary/40 bg-primary/5">
+            <AlertTitle className="text-primary">Bookmark</AlertTitle>
+            <AlertDescription>{bookmarkNotice}</AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_1fr]">
           <div className="space-y-6">
             <Card className="border-border shadow-sm">
@@ -1239,13 +1307,36 @@ export default function TutorPage() {
                             </div>
                             <div
                               className={cn(
-                                "flex min-h-[3rem] items-center justify-center rounded-lg border border-dashed border-border/80 bg-muted/20 px-2 py-2.5 text-center",
+                                "relative flex min-h-[3rem] items-center justify-center rounded-lg border border-dashed border-border/80 bg-muted/20 px-2 py-2.5 text-center",
                                 playingSlide === slideIndex && narrationSubtitleLine && "border-primary/40 bg-primary/5",
                                 eli5ForSlideIndex === slideIndex && eli5Script && "border-amber-500/30 bg-amber-500/5",
                               )}
                               aria-live="polite"
                             >
-                              <p className="w-full max-w-full break-words text-sm font-medium leading-snug text-foreground sm:text-base">
+                              <button
+                                type="button"
+                                className={cn(
+                                  "absolute right-1.5 top-1.5 z-10 inline-flex size-8 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground shadow-sm transition-colors",
+                                  "hover:border-primary/40 hover:bg-accent hover:text-foreground",
+                                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                  "disabled:pointer-events-none disabled:opacity-40",
+                                )}
+                                aria-label="Bookmark full narration for this slide"
+                                title="Save full narration for this slide to Bookmarks"
+                                disabled={
+                                  !narrationBookmarkText ||
+                                  !activeSession ||
+                                  bookmarkSaving !== null
+                                }
+                                onClick={() => void saveBookmarkFromSubtitle("narration")}
+                              >
+                                {bookmarkSaving === "narration" ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  <Plus className="size-4" />
+                                )}
+                              </button>
+                              <p className="w-full max-w-full break-words pr-11 text-sm font-medium leading-snug text-foreground sm:text-base">
                                 {playingSlide === slideIndex && narrationSubtitleLine
                                   ? narrationSubtitleLine
                                   : playingSlide === slideIndex
@@ -1549,10 +1640,33 @@ export default function TutorPage() {
                         </p>
                         {(playingAnswer || answerPaused) && answerSubtitleLine ? (
                           <div
-                            className="flex min-h-[2.75rem] items-center justify-center rounded-lg border border-dashed border-primary/35 bg-primary/5 px-3 py-2 text-center"
+                            className="relative flex min-h-[2.75rem] items-center justify-center rounded-lg border border-dashed border-primary/35 bg-primary/5 px-3 py-2 text-center"
                             aria-live="polite"
                           >
-                            <p className="max-w-full break-words text-sm font-medium text-foreground">
+                            <button
+                              type="button"
+                              className={cn(
+                                "absolute right-1.5 top-1.5 z-10 inline-flex size-8 items-center justify-center rounded-md border border-primary/25 bg-background/95 text-muted-foreground shadow-sm transition-colors",
+                                "hover:border-primary/50 hover:bg-accent hover:text-foreground",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                "disabled:pointer-events-none disabled:opacity-40",
+                              )}
+                              aria-label="Bookmark full tutor answer"
+                              title="Save the full answer text to Bookmarks"
+                              disabled={
+                                !activeSession ||
+                                !lastQa?.answer?.trim() ||
+                                bookmarkSaving !== null
+                              }
+                              onClick={() => void saveBookmarkFromSubtitle("qa_answer")}
+                            >
+                              {bookmarkSaving === "qa_answer" ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Plus className="size-4" />
+                              )}
+                            </button>
+                            <p className="max-w-full break-words pr-10 text-sm font-medium text-foreground">
                               {answerSubtitleLine}
                             </p>
                           </div>

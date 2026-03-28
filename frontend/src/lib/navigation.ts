@@ -23,6 +23,5 @@ export const platformNav = {
 
 export const mainNav = [
   { href: "/", label: "Home" },
-  { href: "/#features", label: "Features" },
   { href: "/friends", label: "Friends" },
 ] as const;

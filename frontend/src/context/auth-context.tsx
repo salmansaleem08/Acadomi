@@ -38,6 +38,8 @@ const protectedPrefixes = [
   "/podcast",
   "/role-reversal",
   "/tutor",
+  "/cheat-sheets",
+  "/bookmarks",
 ];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

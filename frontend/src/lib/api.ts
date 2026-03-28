@@ -187,6 +187,64 @@ export async function apiDeletePodcast(
   return parseJson(res);
 }
 
+export type CheatSheetListItemDTO = {
+  id: string;
+  sourceUploadId: string;
+  topic: string;
+  title: string;
+  preview: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CheatSheetFullDTO = CheatSheetListItemDTO & { markdown: string };
+
+export async function apiListCheatSheets(
+  token: string,
+): Promise<{ sheets: CheatSheetListItemDTO[]; maxSheets: number }> {
+  const res = await fetch(`${API_BASE}/api/cheat-sheets`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiGetCheatSheet(
+  token: string,
+  id: string,
+): Promise<{ sheet: CheatSheetFullDTO }> {
+  const res = await fetch(`${API_BASE}/api/cheat-sheets/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiGenerateCheatSheet(
+  token: string,
+  uploadId: string,
+  topic: string,
+): Promise<{ sheet: CheatSheetFullDTO }> {
+  const res = await fetch(`${API_BASE}/api/cheat-sheets/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ uploadId, topic }),
+  });
+  return parseJson(res);
+}
+
+export async function apiDeleteCheatSheet(
+  token: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/api/cheat-sheets/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
 /** Caller should `URL.revokeObjectURL` when the URL is no longer needed. */
 export async function apiFetchPodcastAudioBlobUrl(
   token: string,
@@ -275,6 +333,121 @@ export async function apiDeleteRoleReversalSession(
   const res = await fetch(`${API_BASE}/api/role-reversal/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export type BookmarkMaterialSummaryDTO = {
+  uploadId: string;
+  title: string;
+  kind: string;
+  bookmarkCount: number;
+  lastBookmarkAt: string;
+};
+
+export type ConceptBookmarkDTO = {
+  id: string;
+  sourceUploadId: string;
+  lineText: string;
+  tutorSessionId: string | null;
+  slideIndex: number | null;
+  slideTitle: string;
+  subtitleSource: "narration" | "qa_answer";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function apiListBookmarkMaterials(
+  token: string,
+): Promise<{ materials: BookmarkMaterialSummaryDTO[]; maxBookmarks: number }> {
+  const res = await fetch(`${API_BASE}/api/bookmarks/materials`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiListBookmarksForUpload(
+  token: string,
+  uploadId: string,
+): Promise<{ bookmarks: ConceptBookmarkDTO[] }> {
+  const q = new URLSearchParams({ uploadId });
+  const res = await fetch(`${API_BASE}/api/bookmarks?${q}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiCreateConceptBookmark(
+  token: string,
+  body: {
+    sourceUploadId: string;
+    lineText: string;
+    tutorSessionId?: string;
+    slideIndex?: number | null;
+    slideTitle?: string;
+    subtitleSource?: "narration" | "qa_answer";
+  },
+): Promise<{ bookmark: ConceptBookmarkDTO }> {
+  const res = await fetch(`${API_BASE}/api/bookmarks`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  return parseJson(res);
+}
+
+export async function apiDeleteConceptBookmark(
+  token: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/api/bookmarks/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+/** Caller must `URL.revokeObjectURL` when done. */
+export async function apiFetchBookmarkRecapBlobUrl(
+  token: string,
+  bookmarkId: string,
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/bookmarks/${bookmarkId}/recap/tts`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function apiBookmarkChat(
+  token: string,
+  bookmarkId: string,
+  body: {
+    message: string;
+    history?: { role: "user" | "assistant"; content: string }[];
+  },
+): Promise<{ reply: string }> {
+  const res = await fetch(`${API_BASE}/api/bookmarks/${bookmarkId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
   });
   return parseJson(res);
 }

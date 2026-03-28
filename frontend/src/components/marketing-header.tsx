@@ -2,10 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronDown, LayoutDashboard, LogOut, Menu, Settings, Upload } from "lucide-react";
+import { LayoutDashboard, LogOut, Menu, Settings, Upload } from "lucide-react";
 import { useState } from "react";
 
-import { mainNav, platformNav } from "@/lib/navigation";
+import { mainNav } from "@/lib/navigation";
 import { useAuth } from "@/context/auth-context";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 
 export function MarketingHeader() {
   const [open, setOpen] = useState(false);
-  const [mega, setMega] = useState(false);
   const { user, loading, signOut } = useAuth();
 
   return (
@@ -75,6 +74,18 @@ export function MarketingHeader() {
                 AI tutor
               </Link>
               <Link
+                href="/cheat-sheets"
+                className="rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                Cheat sheet
+              </Link>
+              <Link
+                href="/bookmarks"
+                className="rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                Bookmarks
+              </Link>
+              <Link
                 href="/settings"
                 className="rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
@@ -82,31 +93,6 @@ export function MarketingHeader() {
               </Link>
             </>
           ) : null}
-          <div
-            className="relative"
-            onMouseEnter={() => setMega(true)}
-            onMouseLeave={() => setMega(false)}
-          >
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              aria-expanded={mega}
-              aria-haspopup="true"
-            >
-              Platform
-              <ChevronDown className="size-4 opacity-70" />
-            </button>
-            {mega ? (
-              <div className="absolute left-0 top-full z-50 pt-2">
-                <div className="flex min-w-[min(100vw-2rem,42rem)] gap-6 rounded-xl border border-border bg-popover p-6 text-popover-foreground shadow-sm">
-                  <MegaColumn title="Learn & collaborate" items={platformNav.learn} />
-                  <MegaColumn title="Study & revision" items={platformNav.study} />
-                  <MegaColumn title="Engagement" items={platformNav.engagement} />
-                  <MegaColumn title="Social" items={platformNav.social} />
-                </div>
-              </div>
-            ) : null}
-          </div>
         </nav>
 
         <span className="flex-1" />
@@ -192,24 +178,6 @@ export function MarketingHeader() {
                 {item.label}
               </Link>
             ))}
-            <p className="px-3 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Platform roadmap
-            </p>
-            {[
-              ...platformNav.learn,
-              ...platformNav.study,
-              ...platformNav.engagement,
-              ...platformNav.social,
-            ].map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                onClick={() => setOpen(false)}
-              >
-                {item.label}
-              </Link>
-            ))}
             <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
               {user ? (
                 <Button
@@ -237,33 +205,5 @@ export function MarketingHeader() {
         </div>
       ) : null}
     </header>
-  );
-}
-
-function MegaColumn({
-  title,
-  items,
-}: {
-  title: string;
-  items: readonly { href: string; label: string }[];
-}) {
-  return (
-    <div className="min-w-[10rem] space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {title}
-      </p>
-      <ul className="space-y-1">
-        {items.map((item) => (
-          <li key={item.href}>
-            <Link
-              href={item.href}
-              className="block rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            >
-              {item.label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }
