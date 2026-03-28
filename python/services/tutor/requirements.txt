@@ -1,0 +1,11 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+pydantic>=2.0
+python-dotenv>=1.0.0
+opencv-python>=4.8.0
+# Pin avoids broken / incomplete wheels; use Python 3.10–3.12 for official builds.
+# If `import mediapipe` works but FaceMesh fails, run: pip uninstall mediapipe -y && pip install -r requirements.txt
+mediapipe>=0.10.14,<0.11
+numpy>=1.24.0
+gTTS>=2.5.0
