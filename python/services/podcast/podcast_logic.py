@@ -25,6 +25,8 @@ load_dotenv(os.path.join(_SERVICE_DIR, ".env"))
 
 _ORIGINAL_GET_PROBER_NAME = pydub_utils.get_prober_name
 _PYDUB_FFMPEG_READY = False
+_WINGET_FFMPEG_SCAN_DONE = False
+_WINGET_FFMPEG_DIR: str | None = None
 
 
 def _ffmpeg_hint() -> str:
@@ -59,6 +61,10 @@ def _ffmpeg_path_variants(raw: str) -> list[str]:
 
 def _discover_winget_ffmpeg_dir() -> str | None:
     """Find a directory that contains ffmpeg.exe and ffprobe.exe under WinGet packages."""
+    global _WINGET_FFMPEG_SCAN_DONE, _WINGET_FFMPEG_DIR
+    if _WINGET_FFMPEG_SCAN_DONE:
+        return _WINGET_FFMPEG_DIR
+    _WINGET_FFMPEG_SCAN_DONE = True
     if os.name != "nt":
         return None
     local = os.environ.get("LOCALAPPDATA") or os.path.expandvars(r"%LOCALAPPDATA%")
@@ -69,12 +75,10 @@ def _discover_winget_ffmpeg_dir() -> str | None:
         for entry in os.scandir(packages):
             if not entry.is_dir():
                 continue
-            el = entry.name.lower()
-            if "ffmpeg" not in el:
-                continue
             try:
                 for root, _, files in os.walk(entry.path):
                     if "ffmpeg.exe" in files and "ffprobe.exe" in files:
+                        _WINGET_FFMPEG_DIR = root
                         return root
             except OSError:
                 continue
