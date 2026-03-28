@@ -49,23 +49,8 @@ function tokenizeScript(script: string): string[] {
   return script.trim().split(/\s+/).filter(Boolean);
 }
 
-const SUBTITLE_CHUNK = 5;
-
-function wordsToChunks(words: string[], chunkSize: number): string[][] {
-  if (words.length === 0) return [];
-  const out: string[][] = [];
-  for (let i = 0; i < words.length; i += chunkSize) {
-    out.push(words.slice(i, i + chunkSize));
-  }
-  return out;
-}
-
-function chunkIndexAtTime(current: number, duration: number, numChunks: number): number {
-  if (numChunks <= 0) return 0;
-  if (!duration || !Number.isFinite(duration) || duration <= 0) return 0;
-  const t = Math.min(1, Math.max(0, current / duration));
-  return Math.min(numChunks - 1, Math.floor(t * numChunks));
-}
+/** Rolling window of words shown under audio (karaoke-style, synced via rAF). */
+const SUBTITLE_WORD_WINDOW = 12;
 
 function focusTone(f: TutorFocusDTO | null): string {
   if (!f) return "bg-muted text-muted-foreground";
@@ -123,6 +108,55 @@ export default function TutorPage() {
 
   const narrationUrlsRef = React.useRef(narrationUrls);
   narrationUrlsRef.current = narrationUrls;
+
+  const slideIndexRef = React.useRef(slideIndex);
+  slideIndexRef.current = slideIndex;
+  const playingSlideRef = React.useRef(playingSlide);
+  playingSlideRef.current = playingSlide;
+
+  /** Saved playback position per session slide (blob URL key `${id}:${idx}`). */
+  const narrationProgressRef = React.useRef<Record<string, number>>({});
+  /** After Q&A, resume slide narration from here (if user is still on that slide). */
+  const lectureResumeRef = React.useRef<{ slideIndex: number; key: string; time: number } | null>(null);
+  const subtitleRafRef = React.useRef<number | null>(null);
+  const subtitleWordsRef = React.useRef<string[]>([]);
+
+  const cancelSubtitleRaf = React.useCallback(() => {
+    if (subtitleRafRef.current != null) {
+      cancelAnimationFrame(subtitleRafRef.current);
+      subtitleRafRef.current = null;
+    }
+  }, []);
+
+  const attachSubtitleRaf = React.useCallback(
+    (a: HTMLAudioElement, words: string[], setLine: (line: string) => void) => {
+      cancelSubtitleRaf();
+      subtitleWordsRef.current = words;
+      const tick = () => {
+        const el = audioRef.current;
+        if (!el || el !== a) {
+          subtitleRafRef.current = null;
+          return;
+        }
+        if (el.paused) {
+          subtitleRafRef.current = null;
+          return;
+        }
+        const d = el.duration;
+        const t = el.currentTime;
+        const w = subtitleWordsRef.current;
+        if (w.length > 0 && d > 0 && Number.isFinite(d)) {
+          const ratio = Math.min(1, Math.max(0, t / d));
+          const wi = Math.min(w.length - 1, Math.floor(ratio * w.length));
+          const start = Math.max(0, wi - SUBTITLE_WORD_WINDOW + 1);
+          setLine(w.slice(start, wi + 1).join(" "));
+        }
+        subtitleRafRef.current = requestAnimationFrame(tick);
+      };
+      subtitleRafRef.current = requestAnimationFrame(tick);
+    },
+    [cancelSubtitleRaf],
+  );
 
   React.useEffect(() => {
     return () => {
@@ -299,6 +333,35 @@ export default function TutorPage() {
     };
   }, [activeSession, camOn]);
 
+  React.useEffect(() => {
+    const s = activeSession;
+    const tok = getToken();
+    if (!s || !tok) return;
+    const n = s.slides.length;
+    const want = [slideIndex, slideIndex + 1, slideIndex - 1].filter((i) => i >= 0 && i < n);
+    let cancelled = false;
+    void (async () => {
+      for (const i of want) {
+        if (cancelled) break;
+        const key = `${s.id}:${i}`;
+        if (narrationUrlsRef.current[key]) continue;
+        try {
+          const url = await apiFetchTutorSlideAudioBlobUrl(tok, s.id, i);
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            break;
+          }
+          setNarrationUrls((prev) => (prev[key] ? prev : { ...prev, [key]: url }));
+        } catch {
+          /* prefetch optional */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSession?.id, slideIndex, activeSession?.slides.length]);
+
   async function openSession(s: TutorSessionDTO) {
     stopNarration();
     setError(null);
@@ -378,11 +441,36 @@ export default function TutorPage() {
   const slide = activeSession?.slides[slideIndex];
 
   function clearAudioHandlers() {
+    cancelSubtitleRaf();
     const a = audioRef.current;
     if (!a) return;
     a.onended = null;
     a.ontimeupdate = null;
     a.onloadedmetadata = null;
+    a.onplay = null;
+  }
+
+  function bookmarkCurrentAudioProgress() {
+    const a = audioRef.current;
+    const s = activeSessionRef.current;
+    if (!a || !s) return;
+    if (audioRoleRef.current === "slide" && playingSlideRef.current !== null && !a.ended) {
+      const key = `${s.id}:${playingSlideRef.current}`;
+      narrationProgressRef.current[key] = a.currentTime;
+    }
+  }
+
+  function pauseLectureForQuestion() {
+    const a = audioRef.current;
+    const s = activeSessionRef.current;
+    if (!a || !s || audioRoleRef.current !== "slide" || playingSlideRef.current === null) return;
+    if (a.ended) return;
+    const idx = playingSlideRef.current;
+    const key = `${s.id}:${idx}`;
+    narrationProgressRef.current[key] = a.currentTime;
+    lectureResumeRef.current = { slideIndex: idx, key, time: a.currentTime };
+    a.pause();
+    cancelSubtitleRaf();
   }
 
   async function playNarration(idx: number) {
@@ -396,10 +484,9 @@ export default function TutorPage() {
     setAnswerSubtitleLine("");
     setError(null);
     const words = tokenizeScript(s.slides[idx]?.script ?? "");
-    const chunks = wordsToChunks(words, SUBTITLE_CHUNK);
     setNarrationSubtitleLine("");
     try {
-      let url = narrationUrls[key];
+      let url = narrationUrlsRef.current[key];
       if (!url) {
         url = await apiFetchTutorSlideAudioBlobUrl(t, s.id, idx);
         setNarrationUrls((prev) => ({ ...prev, [key]: url! }));
@@ -409,20 +496,31 @@ export default function TutorPage() {
         clearAudioHandlers();
         audioRoleRef.current = "slide";
         a.src = url;
-        a.ontimeupdate = () => {
-          if (!a.duration || !Number.isFinite(a.duration) || a.duration <= 0) return;
-          if (chunks.length === 0) {
-            setNarrationSubtitleLine("");
-            return;
+        const saved = narrationProgressRef.current[key] ?? 0;
+        const onReady = () => {
+          const dur = a.duration;
+          if (saved > 0.2 && Number.isFinite(dur) && dur > 0 && saved < dur - 0.12) {
+            a.currentTime = saved;
           }
-          const ci = chunkIndexAtTime(a.currentTime, a.duration, chunks.length);
-          setNarrationSubtitleLine((chunks[ci] ?? []).join(" "));
+          attachSubtitleRaf(a, words, setNarrationSubtitleLine);
+        };
+        if (a.readyState >= 1) {
+          onReady();
+        } else {
+          a.onloadedmetadata = () => {
+            a.onloadedmetadata = null;
+            onReady();
+          };
+        }
+        a.ontimeupdate = () => {
+          narrationProgressRef.current[key] = a.currentTime;
         };
         a.onended = () => {
           clearAudioHandlers();
           audioRoleRef.current = null;
           setPlayingSlide(null);
           setNarrationSubtitleLine("");
+          narrationProgressRef.current[key] = 0;
           if (!autoAdvanceRef.current) return;
           const sess = activeSessionRef.current;
           if (!sess) return;
@@ -449,13 +547,25 @@ export default function TutorPage() {
     }
   }
 
+  async function resumeLectureAfterAnswer() {
+    const saved = lectureResumeRef.current;
+    lectureResumeRef.current = null;
+    if (!saved) return;
+    if (slideIndexRef.current !== saved.slideIndex) return;
+    if (!narrationUrlsRef.current[saved.key]) return;
+    narrationProgressRef.current[saved.key] = saved.time;
+    await playNarration(saved.slideIndex);
+  }
+
   function stopNarration() {
+    bookmarkCurrentAudioProgress();
+    lectureResumeRef.current = null;
     const a = audioRef.current;
     clearAudioHandlers();
     audioRoleRef.current = null;
     if (a) {
       a.pause();
-      a.src = "";
+      a.removeAttribute("src");
       a.load();
     }
     setPlayingSlide(null);
@@ -464,38 +574,48 @@ export default function TutorPage() {
     setAnswerSubtitleLine("");
   }
 
-  async function playAnswerTts(text: string) {
-    const t = getToken();
-    if (!t) return;
+  async function playAnswerTts(text: string, opts?: { onEnded?: () => void }) {
+    const tok = getToken();
+    if (!tok) return;
     if (answerAudioUrl) URL.revokeObjectURL(answerAudioUrl);
     setAnswerAudioUrl(null);
-    stopNarration();
+
+    const a0 = audioRef.current;
+    if (a0 && audioRoleRef.current === "slide") {
+      a0.pause();
+      cancelSubtitleRaf();
+    }
+    clearAudioHandlers();
+
+    setPlayingSlide(null);
+    setNarrationSubtitleLine("");
     const words = tokenizeScript(text);
-    const chunks = wordsToChunks(words, SUBTITLE_CHUNK);
     setAnswerSubtitleLine("");
     try {
-      const url = await apiFetchTutorTtsBlobUrl(t, text);
+      const url = await apiFetchTutorTtsBlobUrl(tok, text);
       setAnswerAudioUrl(url);
       const a = audioRef.current;
       if (a) {
-        clearAudioHandlers();
         audioRoleRef.current = "answer";
         setPlayingAnswer(true);
         a.src = url;
-        a.ontimeupdate = () => {
-          if (!a.duration || !Number.isFinite(a.duration) || a.duration <= 0) return;
-          if (chunks.length === 0) {
-            setAnswerSubtitleLine("");
-            return;
-          }
-          const ci = chunkIndexAtTime(a.currentTime, a.duration, chunks.length);
-          setAnswerSubtitleLine((chunks[ci] ?? []).join(" "));
+        const onReady = () => {
+          attachSubtitleRaf(a, words, setAnswerSubtitleLine);
         };
+        if (a.readyState >= 1) {
+          onReady();
+        } else {
+          a.onloadedmetadata = () => {
+            a.onloadedmetadata = null;
+            onReady();
+          };
+        }
         a.onended = () => {
           clearAudioHandlers();
           audioRoleRef.current = null;
           setPlayingAnswer(false);
           setAnswerSubtitleLine("");
+          opts?.onEnded?.();
         };
         await a.play();
       }
@@ -503,6 +623,7 @@ export default function TutorPage() {
       setPlayingAnswer(false);
       setAnswerSubtitleLine("");
       setError(e instanceof Error ? e.message : "Could not play answer audio.");
+      opts?.onEnded?.();
     }
   }
 
@@ -537,6 +658,7 @@ export default function TutorPage() {
       return;
     }
     setError(null);
+    pauseLectureForQuestion();
     setLastQa(null);
     recordChunksRef.current = [];
     stopQuestionMicStream();
@@ -612,14 +734,17 @@ export default function TutorPage() {
     const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
     if (blob.size < 32) {
       setError("Recording too short — hold the button and speak your question.");
+      void resumeLectureAfterAnswer();
       return;
     }
     setError(null);
     try {
       const qa = await apiTutorAsk(t, { sessionId: s.id, slideIndex: idx, audio: blob });
       setLastQa(qa);
+      await playAnswerTts(qa.answer, { onEnded: () => void resumeLectureAfterAnswer() });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not process your question.");
+      void resumeLectureAfterAnswer();
     }
   }
 
@@ -826,7 +951,7 @@ export default function TutorPage() {
                                   ? narrationSubtitleLine
                                   : playingSlide === slideIndex
                                     ? "…"
-                                    : "Tap Play — a few words at a time."}
+                                    : "Tap Play — words follow the voice in real time."}
                               </p>
                             </div>
                           </div>
@@ -897,7 +1022,7 @@ export default function TutorPage() {
                         {playingSlide !== null || playingAnswer ? (
                           <Button type="button" variant="ghost" size="sm" onClick={stopNarration}>
                             <Square className="mr-2 size-4" />
-                            Stop audio
+                            Pause lesson
                           </Button>
                         ) : null}
                         </div>
@@ -1101,7 +1226,7 @@ export default function TutorPage() {
                             className="flex min-h-[2.75rem] items-center justify-center rounded-lg border border-dashed border-primary/35 bg-primary/5 px-3 py-2 text-center"
                             aria-live="polite"
                           >
-                            <p className="max-w-full truncate text-sm font-medium text-foreground">
+                            <p className="max-w-full break-words text-sm font-medium text-foreground">
                               {answerSubtitleLine}
                             </p>
                           </div>
@@ -1122,6 +1247,38 @@ export default function TutorPage() {
                 </Card>
 
                 <audio ref={audioRef} className="hidden" />
+
+                <div className="pointer-events-none fixed bottom-20 right-4 z-40 md:bottom-10 md:right-6 print:hidden">
+                  <div className="pointer-events-auto flex flex-col items-center gap-1">
+                    <span className="rounded-md bg-background/95 px-2 py-0.5 text-center text-[10px] font-medium text-muted-foreground shadow-sm ring-1 ring-border">
+                      Ask
+                    </span>
+                    <Button
+                      type="button"
+                      title="Hold to ask the tutor (release to send)"
+                      aria-label={asking ? "Release to send your question" : "Hold to ask the tutor a question"}
+                      variant={asking ? "destructive" : "default"}
+                      size="icon"
+                      className="size-14 rounded-full shadow-lg ring-2 ring-background"
+                      disabled={!camOn}
+                      onPointerDown={(e) => {
+                        if (e.button !== 0) return;
+                        if (!asking) void startAskRecording();
+                      }}
+                      onPointerUp={() => {
+                        if (asking) void stopAskRecording();
+                      }}
+                      onPointerCancel={() => {
+                        if (asking) void stopAskRecording();
+                      }}
+                      onPointerLeave={() => {
+                        if (asking) void stopAskRecording();
+                      }}
+                    >
+                      {asking ? <Square className="size-6" aria-hidden /> : <Mic className="size-6" aria-hidden />}
+                    </Button>
+                  </div>
+                </div>
               </>
             )}
           </div>
