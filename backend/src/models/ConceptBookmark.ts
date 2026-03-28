@@ -24,6 +24,8 @@ const conceptBookmarkSchema = new Schema(
       enum: ["narration", "qa_answer"],
       default: "narration",
     },
+    /** Gemini recap script; generated once, then only TTS runs on repeat visits. */
+    recapScript: { type: String, default: "", trim: true, maxlength: 6500 },
   },
   { timestamps: true },
 );
@@ -47,6 +49,7 @@ export type ConceptBookmarkLean = {
   slideIndex: number | null;
   slideTitle: string;
   subtitleSource: "narration" | "qa_answer";
+  recapScript?: string;
   createdAt: Date;
   updatedAt: Date;
 };

@@ -194,10 +194,6 @@ router.delete("/:id", authMiddleware, async (req: AuthedRequest, res: Response) 
 });
 
 router.post("/:id/recap/tts", authMiddleware, async (req: AuthedRequest, res: Response) => {
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
-  }
-
   const id = req.params.id;
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({ error: "Invalid id." });
@@ -209,25 +205,37 @@ router.post("/:id/recap/tts", authMiddleware, async (req: AuthedRequest, res: Re
       return res.status(404).json({ error: "Bookmark not found." });
     }
 
-    const uploadDoc = await Upload.findOne({ _id: b.sourceUploadId, userId: req.userId }).lean<UploadDoc | null>();
-    const material =
-      uploadDoc != null
-        ? [uploadDoc.processedContent, uploadDoc.extractedText].filter(Boolean).join("\n\n").trim()
-        : "";
-    if (!material) {
-      return res.status(400).json({ error: "Source material is missing for this upload." });
+    let scriptForTts = (b.recapScript ?? "").trim();
+
+    if (!scriptForTts) {
+      if (!process.env.GEMINI_API_KEY) {
+        return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+      }
+      const uploadDoc = await Upload.findOne({ _id: b.sourceUploadId, userId: req.userId }).lean<UploadDoc | null>();
+      const material =
+        uploadDoc != null
+          ? [uploadDoc.processedContent, uploadDoc.extractedText].filter(Boolean).join("\n\n").trim()
+          : "";
+      if (!material) {
+        return res.status(400).json({ error: "Source material is missing for this upload." });
+      }
+
+      const generated = await generateBookmarkRecapScript({
+        bookmarkLine: b.lineText,
+        materialExcerpt: material,
+        slideTitle: b.slideTitle || undefined,
+      });
+      scriptForTts = generated.trim();
+      if (!scriptForTts) {
+        return res.status(500).json({ error: "Model returned an empty recap." });
+      }
+      await ConceptBookmark.updateOne(
+        { _id: id, userId: req.userId },
+        { $set: { recapScript: scriptForTts.slice(0, 6500) } },
+      );
     }
 
-    const script = await generateBookmarkRecapScript({
-      bookmarkLine: b.lineText,
-      materialExcerpt: material,
-      slideTitle: b.slideTitle || undefined,
-    });
-    if (!script.trim()) {
-      return res.status(500).json({ error: "Model returned an empty recap." });
-    }
-
-    const { mimeType, audioBase64 } = await tutorPyTts(script.trim().slice(0, 6000));
+    const { mimeType, audioBase64 } = await tutorPyTts(scriptForTts.slice(0, 6000));
     const buf = Buffer.from(audioBase64, "base64");
     res.setHeader("Content-Type", mimeType);
     res.send(buf);

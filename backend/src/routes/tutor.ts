@@ -246,23 +246,28 @@ router.post(
   "/sessions/:id/slides/:slideIndex/eli5",
   authMiddleware,
   async (req: AuthedRequest, res: Response) => {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
-    }
-
     try {
       const id = req.params.id;
       const idx = Number.parseInt(req.params.slideIndex, 10);
       if (!mongoose.Types.ObjectId.isValid(id) || !Number.isFinite(idx) || idx < 0) {
         return res.status(400).json({ error: "Invalid session or slide index." });
       }
-      const s = await TutorSession.findOne({ _id: id, userId: req.userId }).lean<TutorSessionLean | null>();
+      const s = await TutorSession.findOne({ _id: id, userId: req.userId });
       if (!s) {
         return res.status(404).json({ error: "Session not found." });
       }
       const slide = s.slides[idx];
       if (!slide) {
         return res.status(404).json({ error: "Slide not found." });
+      }
+
+      const cached = typeof slide.eli5Script === "string" && slide.eli5Script.trim();
+      if (cached) {
+        return res.json({ script: slide.eli5Script.trim() });
+      }
+
+      if (!process.env.GEMINI_API_KEY) {
+        return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
       }
 
       const uploadDoc = await Upload.findOne({ _id: s.sourceUploadId, userId: req.userId }).lean<
@@ -284,7 +289,12 @@ router.post(
         return res.status(500).json({ error: "Model returned an empty explanation." });
       }
 
-      return res.json({ script: script.trim() });
+      const trimmed = script.trim().slice(0, 8000);
+      s.slides[idx].eli5Script = trimmed;
+      s.markModified("slides");
+      await s.save();
+
+      return res.json({ script: trimmed });
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message : "Could not generate simple explanation.";
