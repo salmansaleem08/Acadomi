@@ -76,8 +76,8 @@ export function AuthLayout({ children, title, subtitle }: AuthLayoutProps) {
               Designed for CS, business, humanities & language-driven subjects
             </p>
             <p className="mt-2 text-sm text-white/55">
-              Interactive AI teaching, group study, bookmarks, quizzes, focus
-              detection, and revision tools — aligned with your FYP scope.
+              Interactive teaching, group study, bookmarks, quizzes, focus cues,
+              and revision tools in one place.
             </p>
           </div>
         </div>

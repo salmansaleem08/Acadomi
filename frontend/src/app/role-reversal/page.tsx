@@ -437,7 +437,7 @@ export default function RoleReversalPage() {
           <h1 className="text-3xl font-semibold tracking-tight">Role reversal teaching</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
             Pick a topic and your study material, then <strong>teach it out loud</strong>. We
-            transcribe your voice, compare it to your upload, and Gemini scores clarity, concepts,
+            transcribe your voice, compare it to your upload, and score clarity, concepts,
             and fluency—with charts and structured feedback. Use <strong>Improve</strong> to record
             again; scores update on the same session.
           </p>
@@ -611,7 +611,7 @@ export default function RoleReversalPage() {
                     ) : null}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Max {maxSessions} saved sessions. Uses the same Gemini API as the rest of Acadomi.
+                    Up to {maxSessions} saved sessions on your account.
                   </p>
                 </>
               )}

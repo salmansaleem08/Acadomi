@@ -5,7 +5,7 @@ export default function SignupPage() {
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="Create an account to save uploads and Gemini-processed study materials under your profile."
+      subtitle="Create an account to save uploads and study materials under your profile."
     >
       <SignupForm />
     </AuthLayout>

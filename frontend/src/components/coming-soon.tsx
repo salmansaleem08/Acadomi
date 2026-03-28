@@ -24,8 +24,7 @@ export function ComingSoon({ title, description }: ComingSoonProps) {
           <CardHeader>
             <CardTitle className="text-2xl">{title}</CardTitle>
             <CardDescription>
-              {description ??
-                "This area will connect to your Express API and Python services as you build the FYP."}
+              {description ?? "This area is not available yet. Check back soon."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-3">

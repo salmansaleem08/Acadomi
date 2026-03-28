@@ -210,9 +210,9 @@ export default function CheatSheetsPage() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Smart cheat sheet</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Pick a completed upload and a topic. Gemini builds a dense, scannable Markdown cheat
-            sheet (tables, bold sections, concrete examples). Sheets are saved to your account;
-            download a PNG for printing or quick glance.
+            Pick a completed upload and a topic. Acadomi builds a dense, scannable cheat sheet
+            (tables, bold sections, concrete examples). Sheets stay in your account; download a PNG
+            for printing or a quick glance.
           </p>
         </div>
 

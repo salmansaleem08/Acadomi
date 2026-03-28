@@ -153,9 +153,8 @@ export default function PodcastPage() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Podcast mode</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Turn any completed upload into a short Alice &amp; Bob dialogue. Audio is generated on
-            the podcast service (Gemini script + gTTS) and saved to your account so you can replay it
-            anytime.
+            Turn any completed upload into a short dialogue episode. Audio is built from your notes
+            and saved to your account so you can replay it anytime.
           </p>
         </div>
 
@@ -178,7 +177,7 @@ export default function PodcastPage() {
                 <Link href="/upload" className="font-medium text-primary underline-offset-4 hover:underline">
                   Uploads
                 </Link>
-                , max 7). Generation can take a minute — keep the Python podcast service running.
+                , max 7). Generation can take up to a minute.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">

@@ -51,8 +51,8 @@ export default function HomePage() {
                 Platform map
               </h2>
               <p className="text-muted-foreground">
-                Uploads &amp; auth are live (MongoDB + Gemini). Other tiles are placeholders for
-                upcoming FYP milestones.
+                Core study flows are live; some roadmap links open preview pages until those areas
+                launch.
               </p>
             </div>
             <div className="grid gap-6 sm:grid-cols-2">
@@ -90,7 +90,7 @@ export default function HomePage() {
           <div>
             <p className="font-semibold text-foreground">Acadomi</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              FYP — AI-powered personalized learning for higher education.
+              AI-powered personalized learning for higher education.
             </p>
           </div>
           <div className="flex flex-wrap gap-4 text-sm">

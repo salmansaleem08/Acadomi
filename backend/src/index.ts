@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -5,6 +6,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import mongoose from "mongoose";
+import { Server } from "socket.io";
 
 import authRoutes from "./routes/auth.js";
 import bookmarkRoutes from "./routes/bookmarks.js";
@@ -12,8 +14,11 @@ import podcastRoutes from "./routes/podcasts.js";
 import roleReversalRoutes from "./routes/roleReversal.js";
 import cheatSheetRoutes from "./routes/cheatSheets.js";
 import friendRoutes from "./routes/friends.js";
+import tutorGroupRoutes from "./routes/tutorGroup.js";
 import tutorRoutes from "./routes/tutor.js";
 import uploadRoutes from "./routes/uploads.js";
+import { registerTutorGroupSocket } from "./socket/registerTutorGroupSocket.js";
+import { setSocketIo } from "./socket/socketRegistry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,8 +64,20 @@ app.use("/api/uploads", uploadRoutes);
 app.use("/api/podcasts", podcastRoutes);
 app.use("/api/role-reversal", roleReversalRoutes);
 app.use("/api/tutor", tutorRoutes);
+app.use("/api/tutor/group", tutorGroupRoutes);
 app.use("/api/cheat-sheets", cheatSheetRoutes);
 app.use("/api/friends", friendRoutes);
+
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  path: "/socket.io/",
+  cors: {
+    origin: FRONTEND_URL,
+    credentials: true,
+  },
+});
+setSocketIo(io);
+registerTutorGroupSocket(io);
 
 async function start() {
   if (MONGODB_URI) {
@@ -78,8 +95,9 @@ async function start() {
     console.warn("JWT_SECRET not set — auth routes will fail.");
   }
 
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`Acadomi API listening on http://localhost:${PORT}`);
+    console.log(`Socket.IO at ws://localhost:${PORT}/socket.io/`);
   });
 }
 

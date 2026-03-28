@@ -270,8 +270,8 @@ export default function BookmarksPage() {
                 {selectedMaterial ? selectedMaterial.title : "Saved lines"}
               </CardTitle>
               <CardDescription>
-                Recap uses Gemini + the same tutor TTS service as live teaching. Chat uses your
-                saved passage and upload notes.
+                Short audio recaps expand what you saved; chat answers follow-ups using your notes
+                and that saved passage.
               </CardDescription>
             </CardHeader>
             <CardContent>

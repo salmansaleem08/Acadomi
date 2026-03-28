@@ -4,7 +4,7 @@ export default function Page() {
   return (
     <ComingSoon
       title="Teach the AI (role reversal)"
-      description="Not implemented in this milestone — will use your saved uploads as reference material when you build this mode."
+      description="Train the tutor on your saved materials so explanations match your course—coming soon."
     />
   );
 }

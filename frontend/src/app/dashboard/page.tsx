@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { MarketingHeader } from "@/components/marketing-header";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -39,6 +40,8 @@ import {
   getToken,
   type TutorGroupInviteCardDTO,
 } from "@/lib/api";
+
+const GROUP_SESSION_NOTICE_KEY = "acadomi:groupSessionNotice";
 
 function formatDurationMs(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -123,6 +126,22 @@ export default function DashboardPage() {
   const [stats, setStats] = React.useState<DashboardStats | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [groupInvites, setGroupInvites] = React.useState<TutorGroupInviteCardDTO[]>([]);
+  const [groupSessionNotice, setGroupSessionNotice] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    try {
+      const role = sessionStorage.getItem(GROUP_SESSION_NOTICE_KEY);
+      if (!role) return;
+      sessionStorage.removeItem(GROUP_SESSION_NOTICE_KEY);
+      setGroupSessionNotice(
+        role === "host"
+          ? "You ended the group study session."
+          : "The host ended the group study session.",
+      );
+    } catch {
+      /* private mode */
+    }
+  }, []);
 
   React.useEffect(() => {
     const t = getToken();
@@ -131,15 +150,25 @@ export default function DashboardPage() {
       return;
     }
     let cancelled = false;
-    void apiListTutorGroupInvitesMine(t)
-      .then((r) => {
-        if (!cancelled) setGroupInvites(r.invites);
-      })
-      .catch(() => {
-        if (!cancelled) setGroupInvites([]);
-      });
+    const loadGroupInvites = () => {
+      void apiListTutorGroupInvitesMine(t)
+        .then((r) => {
+          if (!cancelled) setGroupInvites(r.invites);
+        })
+        .catch(() => {
+          if (!cancelled) setGroupInvites([]);
+        });
+    };
+    loadGroupInvites();
+    const intervalId = window.setInterval(loadGroupInvites, 10000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadGroupInvites();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [user]);
 
@@ -236,6 +265,17 @@ export default function DashboardPage() {
     <div className="flex min-h-screen flex-col bg-background">
       <MarketingHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
+        {groupSessionNotice ? (
+          <Alert className="mb-8 border-primary/30 bg-primary/5">
+            <AlertTitle>Group study</AlertTitle>
+            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>{groupSessionNotice}</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => setGroupSessionNotice(null)}>
+                Dismiss
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <section
           className="relative overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.07] via-background to-muted/40 px-6 py-8 shadow-sm sm:px-10 sm:py-10"
           aria-labelledby="dash-quote"

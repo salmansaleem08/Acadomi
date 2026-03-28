@@ -156,9 +156,9 @@ export default function UploadPage() {
         <div className="space-y-2">
           <h1 className="text-3xl font-bold text-foreground">Learning uploads</h1>
           <p className="text-muted-foreground">
-            Upload PDFs, images, or audio. Optional title and prompt — Gemini extracts content and
-            saves structured notes to your account (max {maxUploads} items). Later, podcast and
-            other modes can pull from this list.
+            Upload PDFs, images, or audio. Add an optional title and instructions so we can turn
+            your files into structured notes in your account (max {maxUploads} items). Podcast, tutor,
+            and other modes use this library.
           </p>
         </div>
 
@@ -258,7 +258,7 @@ export default function UploadPage() {
                       </Button>
                     )}
                     <span className="text-xs text-muted-foreground">
-                      Recording saves as WebM — supported by the API.
+                      Browser recording is saved in a standard web audio format.
                     </span>
                   </div>
                 ) : null}
@@ -270,7 +270,7 @@ export default function UploadPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="prompt">Instructions for Gemini (optional)</Label>
+                <Label htmlFor="prompt">Instructions for processing (optional)</Label>
                 <Textarea
                   id="prompt"
                   value={prompt}
@@ -285,7 +285,7 @@ export default function UploadPage() {
                 {loading ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    Processing with Gemini…
+                    Processing…
                   </>
                 ) : atLimit ? (
                   "Upload limit reached"
@@ -357,7 +357,7 @@ export default function UploadPage() {
                         className="h-auto px-0 text-primary hover:underline"
                         onClick={() => setExpanded(expanded === u.id ? null : u.id)}
                       >
-                        {expanded === u.id ? "Hide details" : "View Gemini output"}
+                        {expanded === u.id ? "Hide details" : "View processed notes"}
                       </Button>
                       {expanded === u.id ? (
                         <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4 text-sm">

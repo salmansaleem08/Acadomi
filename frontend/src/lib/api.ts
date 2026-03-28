@@ -754,3 +754,176 @@ export async function apiTutorAsk(
   });
   return parseJson(res);
 }
+
+/* —— Tutor group study —— */
+
+export type TutorGroupMemberDTO = {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  isHost: boolean;
+};
+
+export type TutorGroupDetailDTO = {
+  id: string;
+  tutorSessionId: string;
+  hostUserId: string;
+  inviteeUserIds: string[];
+  acceptedUserIds: string[];
+  status: string;
+  displayTitle: string;
+  members: TutorGroupMemberDTO[];
+  isHost: boolean;
+  youAccepted: boolean;
+};
+
+export type TutorGroupInviteCardDTO = {
+  id: string;
+  hostName: string;
+  displayTitle: string;
+  tutorSessionId: string;
+};
+
+export type TutorGroupChatMessageDTO = {
+  id: string;
+  userId: string;
+  firstName: string;
+  lastName: string;
+  text: string;
+  at: string;
+};
+
+export async function apiCreateTutorGroup(
+  token: string,
+  body: { tutorSessionId: string; friendUserIds: string[] },
+): Promise<{ group: TutorGroupDetailDTO }> {
+  const res = await fetch(`${API_BASE}/api/tutor/group`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  return parseJson(res);
+}
+
+export async function apiListTutorGroupInvitesMine(
+  token: string,
+): Promise<{ invites: TutorGroupInviteCardDTO[] }> {
+  const res = await fetch(`${API_BASE}/api/tutor/group/invites/mine`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiGetTutorGroup(
+  token: string,
+  groupId: string,
+): Promise<{ group: TutorGroupDetailDTO }> {
+  const res = await fetch(`${API_BASE}/api/tutor/group/${groupId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiAcceptTutorGroup(
+  token: string,
+  groupId: string,
+): Promise<{ ok: boolean; group: { id: string; status: string; members: TutorGroupMemberDTO[] } }> {
+  const res = await fetch(`${API_BASE}/api/tutor/group/${groupId}/accept`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiDeclineTutorGroup(token: string, groupId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/api/tutor/group/${groupId}/decline`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiEndTutorGroup(token: string, groupId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/api/tutor/group/${groupId}/end`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiGetTutorGroupSession(
+  token: string,
+  groupId: string,
+): Promise<{ session: TutorSessionDTO }> {
+  const res = await fetch(`${API_BASE}/api/tutor/group/${groupId}/session`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseJson(res);
+}
+
+export async function apiFetchGroupSlideAudioBlobUrl(
+  token: string,
+  groupId: string,
+  slideIndex: number,
+): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/api/tutor/group/${groupId}/slides/${slideIndex}/tts`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function apiFetchGroupTtsBlobUrl(token: string, groupId: string, text: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/tutor/group/${groupId}/tts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function apiGroupTutorAsk(
+  token: string,
+  params: { groupId: string; slideIndex: number; audio: Blob },
+): Promise<{ question: string; answer: string }> {
+  const fd = new FormData();
+  fd.append("slideIndex", String(params.slideIndex));
+  fd.append("audio", params.audio, "question.webm");
+  const res = await fetch(`${API_BASE}/api/tutor/group/${params.groupId}/ask`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  return parseJson(res);
+}
