@@ -10,9 +10,25 @@ import re
 import shutil
 import subprocess
 import tempfile
+import warnings
 from typing import Any
 
 import google.generativeai as genai
+
+# pydub warns before ensure_pydub_ffmpeg() runs; FFmpeg paths are set on first request.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Couldn't find ffmpeg or avconv",
+    category=RuntimeWarning,
+    module="pydub.utils",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Couldn't find ffprobe or avprobe",
+    category=RuntimeWarning,
+    module="pydub.utils",
+)
+
 import pydub.utils as pydub_utils
 from dotenv import load_dotenv
 from gtts import gTTS
@@ -261,6 +277,55 @@ def _configure_gemini(
     return model or "gemini-2.5-flash"
 
 
+def _strip_json_fences(text: str) -> str:
+    t = text.strip()
+    t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.IGNORECASE | re.MULTILINE)
+    t = re.sub(r"\s*```\s*$", "", t, flags=re.MULTILINE)
+    return t.strip()
+
+
+def _parse_dialogue_json_array(raw: str) -> list[Any]:
+    """
+    Gemini often appends prose after the JSON array; json.loads then raises Extra data.
+    raw_decode from the first '[' parses exactly one JSON value and ignores the rest.
+    """
+    s = _strip_json_fences(raw)
+    dec = json.JSONDecoder()
+    idx = s.find("[")
+    if idx >= 0:
+        try:
+            data, _end = dec.raw_decode(s, idx)
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+    # Wrapped object: {"dialogue": [...]}
+    idx = s.find("{")
+    if idx >= 0:
+        try:
+            data, _end = dec.raw_decode(s, idx)
+            if isinstance(data, dict):
+                for key in ("dialogue", "script", "turns", "lines", "podcast", "conversation"):
+                    v = data.get(key)
+                    if isinstance(v, list):
+                        return v
+                for v in data.values():
+                    if isinstance(v, list) and v and isinstance(v[0], dict):
+                        return v
+        except json.JSONDecodeError:
+            pass
+    # Last resort: greedy bracket slice (old behaviour; can fail on strings containing ]).
+    m = re.search(r"\[[\s\S]*\]", s)
+    if m:
+        try:
+            data = json.loads(m.group())
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+    raise ValueError("Gemini did not return a usable JSON array of dialogue turns.")
+
+
 def generate_script_from_gemini(
     source_text: str,
     *,
@@ -288,31 +353,18 @@ RULES:
   [{{"speaker":"Alice","text":"..."}},{{"speaker":"Bob","text":"..."}}, ...]
 - speaker must be exactly "Alice" or "Bob"
 - text must be plain English suitable for text-to-speech (no emojis, minimal punctuation)
+- Do not add any text, labels, or commentary before or after the JSON array
 
 MATERIAL:
 ---
 {text}
 ---
 
-JSON array only:"""
+Your entire reply must be only the JSON array, nothing else:"""
 
     response = model.generate_content(prompt)
     raw = (response.text or "").strip()
-
-    # Strip accidental ```json fences
-    raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-    raw = re.sub(r"\s*```$", "", raw)
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        m = re.search(r"\[[\s\S]*\]", raw)
-        if not m:
-            raise ValueError("Gemini did not return valid JSON dialogue") from None
-        data = json.loads(m.group())
-
-    if not isinstance(data, list):
-        raise ValueError("Expected JSON array of dialogue turns")
+    data = _parse_dialogue_json_array(raw)
 
     lines: list[dict[str, str]] = []
     for item in data:
