@@ -49,8 +49,19 @@ function tokenizeScript(script: string): string[] {
   return script.trim().split(/\s+/).filter(Boolean);
 }
 
-/** Rolling window of words shown under audio (karaoke-style, synced via rAF). */
-const SUBTITLE_WORD_WINDOW = 12;
+/** One subtitle line per phrase; lines swap only when the phrase index changes (avoids word-by-word jitter). */
+const SUBTITLE_WORDS_PER_PHRASE = 8;
+/** Nudge display slightly early so captions feel aligned with speech (no true word timestamps from TTS). */
+const SUBTITLE_LEAD_RATIO = 0.035;
+
+function buildPhraseLines(words: string[], wordsPerPhrase: number): string[] {
+  if (words.length === 0) return [];
+  const lines: string[] = [];
+  for (let i = 0; i < words.length; i += wordsPerPhrase) {
+    lines.push(words.slice(i, i + wordsPerPhrase).join(" "));
+  }
+  return lines;
+}
 
 function focusTone(f: TutorFocusDTO | null): string {
   if (!f) return "bg-muted text-muted-foreground";
@@ -88,6 +99,8 @@ export default function TutorPage() {
   const [narrationSubtitleLine, setNarrationSubtitleLine] = React.useState("");
   const [answerSubtitleLine, setAnswerSubtitleLine] = React.useState("");
   const [playingAnswer, setPlayingAnswer] = React.useState(false);
+  const [answerPaused, setAnswerPaused] = React.useState(false);
+  const [questionSubmitting, setQuestionSubmitting] = React.useState(false);
 
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -119,7 +132,10 @@ export default function TutorPage() {
   /** After Q&A, resume slide narration from here (if user is still on that slide). */
   const lectureResumeRef = React.useRef<{ slideIndex: number; key: string; time: number } | null>(null);
   const subtitleRafRef = React.useRef<number | null>(null);
-  const subtitleWordsRef = React.useRef<string[]>([]);
+  const subtitlePhraseLinesRef = React.useRef<string[]>([]);
+  const answerBlobUrlRef = React.useRef<string | null>(null);
+  const lastAnswerTtsTextRef = React.useRef("");
+  const answerResumeTimeRef = React.useRef(0);
 
   const cancelSubtitleRaf = React.useCallback(() => {
     if (subtitleRafRef.current != null) {
@@ -131,7 +147,9 @@ export default function TutorPage() {
   const attachSubtitleRaf = React.useCallback(
     (a: HTMLAudioElement, words: string[], setLine: (line: string) => void) => {
       cancelSubtitleRaf();
-      subtitleWordsRef.current = words;
+      const lines = buildPhraseLines(words, SUBTITLE_WORDS_PER_PHRASE);
+      subtitlePhraseLinesRef.current = lines;
+      const lastChunkIdx = { current: -1 };
       const tick = () => {
         const el = audioRef.current;
         if (!el || el !== a) {
@@ -144,12 +162,15 @@ export default function TutorPage() {
         }
         const d = el.duration;
         const t = el.currentTime;
-        const w = subtitleWordsRef.current;
-        if (w.length > 0 && d > 0 && Number.isFinite(d)) {
-          const ratio = Math.min(1, Math.max(0, t / d));
-          const wi = Math.min(w.length - 1, Math.floor(ratio * w.length));
-          const start = Math.max(0, wi - SUBTITLE_WORD_WINDOW + 1);
-          setLine(w.slice(start, wi + 1).join(" "));
+        const phraseLines = subtitlePhraseLinesRef.current;
+        if (phraseLines.length > 0 && d > 0 && Number.isFinite(d)) {
+          const ratio = Math.min(1, Math.max(0, t / d + SUBTITLE_LEAD_RATIO));
+          let ci = Math.floor(ratio * phraseLines.length);
+          if (ci >= phraseLines.length) ci = phraseLines.length - 1;
+          if (ci !== lastChunkIdx.current) {
+            lastChunkIdx.current = ci;
+            setLine(phraseLines[ci] ?? "");
+          }
         }
         subtitleRafRef.current = requestAnimationFrame(tick);
       };
@@ -161,9 +182,10 @@ export default function TutorPage() {
   React.useEffect(() => {
     return () => {
       Object.values(narrationUrlsRef.current).forEach((u) => URL.revokeObjectURL(u));
-      if (answerAudioUrl) URL.revokeObjectURL(answerAudioUrl);
+      const au = answerBlobUrlRef.current;
+      if (au) URL.revokeObjectURL(au);
     };
-  }, [answerAudioUrl]);
+  }, []);
 
   const refresh = React.useCallback(async () => {
     const t = getToken();
@@ -460,22 +482,52 @@ export default function TutorPage() {
     }
   }
 
-  function pausePlaybackForQuestion() {
+  /** Stop all playback and revoke answer audio so Q&A recording starts from a clean state. */
+  function haltAllMediaForQuestion() {
+    setNarrationLoading(false);
     const a = audioRef.current;
-    if (!a || a.ended) return;
-    if (audioRoleRef.current === "answer") {
-      a.pause();
-      cancelSubtitleRaf();
-      return;
-    }
     const s = activeSessionRef.current;
-    if (!s || audioRoleRef.current !== "slide" || playingSlideRef.current === null) return;
-    const idx = playingSlideRef.current;
-    const key = `${s.id}:${idx}`;
-    narrationProgressRef.current[key] = a.currentTime;
-    lectureResumeRef.current = { slideIndex: idx, key, time: a.currentTime };
+
+    if (a && s && audioRoleRef.current === "slide" && playingSlideRef.current !== null && !a.ended) {
+      const idx = playingSlideRef.current;
+      const key = `${s.id}:${idx}`;
+      narrationProgressRef.current[key] = a.currentTime;
+      lectureResumeRef.current = { slideIndex: idx, key, time: a.currentTime };
+    }
+
+    const au = answerBlobUrlRef.current;
+    if (au) {
+      URL.revokeObjectURL(au);
+      answerBlobUrlRef.current = null;
+    }
+    setAnswerAudioUrl(null);
+    lastAnswerTtsTextRef.current = "";
+    answerResumeTimeRef.current = 0;
+    setAnswerPaused(false);
+
+    cancelSubtitleRaf();
+    clearAudioHandlers();
+    audioRoleRef.current = null;
+    if (a) {
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+    }
+    setPlayingSlide(null);
+    setPlayingAnswer(false);
+    setNarrationSubtitleLine("");
+    setAnswerSubtitleLine("");
+  }
+
+  function pauseAnswerPlayback() {
+    const a = audioRef.current;
+    if (!a || audioRoleRef.current !== "answer") return;
+    if (!playingAnswer) return;
+    answerResumeTimeRef.current = a.currentTime;
     a.pause();
     cancelSubtitleRaf();
+    setPlayingAnswer(false);
+    setAnswerPaused(true);
   }
 
   async function playNarration(idx: number) {
@@ -486,6 +538,7 @@ export default function TutorPage() {
     setNarrationLoading(true);
     setPlayingSlide(idx);
     setPlayingAnswer(false);
+    setAnswerPaused(false);
     setAnswerSubtitleLine("");
     setError(null);
     const words = tokenizeScript(s.slides[idx]?.script ?? "");
@@ -565,6 +618,15 @@ export default function TutorPage() {
   function stopNarration() {
     bookmarkCurrentAudioProgress();
     lectureResumeRef.current = null;
+    const au = answerBlobUrlRef.current;
+    if (au) {
+      URL.revokeObjectURL(au);
+      answerBlobUrlRef.current = null;
+    }
+    setAnswerAudioUrl(null);
+    lastAnswerTtsTextRef.current = "";
+    answerResumeTimeRef.current = 0;
+    setAnswerPaused(false);
     const a = audioRef.current;
     clearAudioHandlers();
     audioRoleRef.current = null;
@@ -582,12 +644,76 @@ export default function TutorPage() {
   async function playAnswerTts(text: string, opts?: { onEnded?: () => void }) {
     const tok = getToken();
     if (!tok) return;
-    if (answerAudioUrl) URL.revokeObjectURL(answerAudioUrl);
+    const a = audioRef.current;
+    if (!a) return;
+
+    const bufferedSame = !!answerBlobUrlRef.current && lastAnswerTtsTextRef.current === text;
+    if (bufferedSame) {
+      if (!a.paused && !a.ended) return;
+      if (audioRoleRef.current === "slide") {
+        a.pause();
+        cancelSubtitleRaf();
+      }
+      clearAudioHandlers();
+      setPlayingSlide(null);
+      setNarrationSubtitleLine("");
+      const words = tokenizeScript(text);
+      setPlayingAnswer(true);
+      setAnswerPaused(false);
+      audioRoleRef.current = "answer";
+      if (!a.src && answerBlobUrlRef.current) {
+        a.src = answerBlobUrlRef.current;
+      }
+      const resumeT = answerResumeTimeRef.current;
+      const seekTo = a.ended || resumeT < 0.12 ? 0 : resumeT;
+      const onReady = () => {
+        const dur = a.duration;
+        if (Number.isFinite(dur) && dur > 0.1) {
+          a.currentTime = Math.min(Math.max(0, seekTo), dur - 0.05);
+        } else if (seekTo > 0) {
+          a.currentTime = seekTo;
+        }
+        attachSubtitleRaf(a, words, setAnswerSubtitleLine);
+      };
+      if (a.readyState >= 1) {
+        onReady();
+      } else {
+        a.onloadedmetadata = () => {
+          a.onloadedmetadata = null;
+          onReady();
+        };
+      }
+      a.ontimeupdate = () => {
+        answerResumeTimeRef.current = a.currentTime;
+      };
+      a.onended = () => {
+        clearAudioHandlers();
+        audioRoleRef.current = null;
+        setPlayingAnswer(false);
+        setAnswerPaused(false);
+        setAnswerSubtitleLine("");
+        answerResumeTimeRef.current = 0;
+        opts?.onEnded?.();
+      };
+      try {
+        await a.play();
+      } catch {
+        setPlayingAnswer(false);
+        setAnswerPaused(true);
+      }
+      return;
+    }
+
+    const auOld = answerBlobUrlRef.current;
+    if (auOld) {
+      URL.revokeObjectURL(auOld);
+      answerBlobUrlRef.current = null;
+    }
     setAnswerAudioUrl(null);
 
-    const a0 = audioRef.current;
-    if (a0 && audioRoleRef.current === "slide") {
-      a0.pause();
+    const aSlide = audioRef.current;
+    if (aSlide && audioRoleRef.current === "slide") {
+      aSlide.pause();
       cancelSubtitleRaf();
     }
     clearAudioHandlers();
@@ -596,37 +722,47 @@ export default function TutorPage() {
     setNarrationSubtitleLine("");
     const words = tokenizeScript(text);
     setAnswerSubtitleLine("");
+    lastAnswerTtsTextRef.current = text;
+    answerResumeTimeRef.current = 0;
     try {
       const url = await apiFetchTutorTtsBlobUrl(tok, text);
+      answerBlobUrlRef.current = url;
       setAnswerAudioUrl(url);
-      const a = audioRef.current;
-      if (a) {
+      const ap = audioRef.current;
+      if (ap) {
         audioRoleRef.current = "answer";
         setPlayingAnswer(true);
-        a.src = url;
+        setAnswerPaused(false);
+        ap.src = url;
         const onReady = () => {
-          attachSubtitleRaf(a, words, setAnswerSubtitleLine);
+          attachSubtitleRaf(ap, words, setAnswerSubtitleLine);
         };
-        if (a.readyState >= 1) {
+        if (ap.readyState >= 1) {
           onReady();
         } else {
-          a.onloadedmetadata = () => {
-            a.onloadedmetadata = null;
+          ap.onloadedmetadata = () => {
+            ap.onloadedmetadata = null;
             onReady();
           };
         }
-        a.onended = () => {
+        ap.ontimeupdate = () => {
+          answerResumeTimeRef.current = ap.currentTime;
+        };
+        ap.onended = () => {
           clearAudioHandlers();
           audioRoleRef.current = null;
           setPlayingAnswer(false);
+          setAnswerPaused(false);
           setAnswerSubtitleLine("");
+          answerResumeTimeRef.current = 0;
           opts?.onEnded?.();
         };
-        await a.play();
+        await ap.play();
       }
     } catch (e) {
       setPlayingAnswer(false);
       setAnswerSubtitleLine("");
+      lastAnswerTtsTextRef.current = "";
       setError(e instanceof Error ? e.message : "Could not play answer audio.");
       opts?.onEnded?.();
     }
@@ -657,13 +793,23 @@ export default function TutorPage() {
     }
   }
 
+  async function toggleQuestionRecording() {
+    if (!camOn || questionSubmitting) return;
+    if (asking) {
+      await finishQuestionRecording();
+      return;
+    }
+    await startAskRecording();
+  }
+
   async function startAskRecording() {
     if (typeof MediaRecorder === "undefined") {
       setError("This browser does not support recording your question here. Try Chrome or Edge on a computer.");
       return;
     }
+    if (asking) return;
     setError(null);
-    pausePlaybackForQuestion();
+    haltAllMediaForQuestion();
     setLastQa(null);
     recordChunksRef.current = [];
     stopQuestionMicStream();
@@ -711,7 +857,7 @@ export default function TutorPage() {
     setError("Recording could not start. Try Chrome or Edge, or refresh the page.");
   }
 
-  async function stopAskRecording() {
+  async function finishQuestionRecording() {
     const rec = recorderRef.current;
     if (!rec || rec.state === "inactive") {
       setAsking(false);
@@ -738,11 +884,12 @@ export default function TutorPage() {
     recordChunksRef.current = [];
     const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
     if (blob.size < 32) {
-      setError("Recording too short — hold the button and speak your question.");
+      setError("Recording too short — tap Record, speak, then tap Stop & send when you are done.");
       void resumeLectureAfterAnswer();
       return;
     }
     setError(null);
+    setQuestionSubmitting(true);
     try {
       const qa = await apiTutorAsk(t, { sessionId: s.id, slideIndex: idx, audio: blob });
       setLastQa(qa);
@@ -750,6 +897,8 @@ export default function TutorPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not process your question.");
       void resumeLectureAfterAnswer();
+    } finally {
+      setQuestionSubmitting(false);
     }
   }
 
@@ -1025,9 +1174,17 @@ export default function TutorPage() {
                           Play narration
                         </Button>
                         {playingSlide !== null || playingAnswer ? (
-                          <Button type="button" variant="ghost" size="sm" onClick={stopNarration}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              if (playingAnswer) pauseAnswerPlayback();
+                              else stopNarration();
+                            }}
+                          >
                             <Square className="mr-2 size-4" />
-                            Pause lesson
+                            Pause playback
                           </Button>
                         ) : null}
                         </div>
@@ -1174,43 +1331,39 @@ export default function TutorPage() {
                       <CardTitle className="text-lg">Ask a question</CardTitle>
                     </div>
                     <CardDescription>
-                      Hold the button, ask your question in one breath, then release. The tutor replies for the
-                      slide you are on. If recording fails, try again after allowing the microphone, or use Chrome
-                      or Edge on a laptop.
+                      Tap <strong>Record</strong> to start—narration and any answer audio stop so the mic is
+                      clear. Speak your whole question, then tap <strong>Stop &amp; send</strong> to get the
+                      tutor&apos;s reply. Use Chrome or Edge on a laptop if anything fails.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         type="button"
                         variant={asking ? "destructive" : "secondary"}
-                        disabled={!camOn}
-                        onPointerDown={(e) => {
-                          if (e.button !== 0) return;
-                          if (!asking) void startAskRecording();
-                        }}
-                        onPointerUp={() => {
-                          if (asking) void stopAskRecording();
-                        }}
-                        onPointerCancel={() => {
-                          if (asking) void stopAskRecording();
-                        }}
-                        onPointerLeave={() => {
-                          if (asking) void stopAskRecording();
-                        }}
+                        disabled={!camOn || questionSubmitting}
+                        onClick={() => void toggleQuestionRecording()}
                       >
-                        {asking ? (
+                        {questionSubmitting ? (
+                          <>
+                            <Loader2 className="mr-2 size-4 animate-spin" />
+                            Getting answer…
+                          </>
+                        ) : asking ? (
                           <>
                             <Square className="mr-2 size-4" />
-                            Release to send
+                            Stop &amp; send
                           </>
                         ) : (
                           <>
                             <Mic className="mr-2 size-4" />
-                            Hold to ask
+                            Record question
                           </>
                         )}
                       </Button>
+                      {asking ? (
+                        <span className="text-xs text-muted-foreground">Recording… tap Stop when finished.</span>
+                      ) : null}
                     </div>
                     {lastQa ? (
                       <div className="space-y-2 rounded-lg border border-border bg-card p-4 text-sm">
@@ -1221,12 +1374,12 @@ export default function TutorPage() {
                         <p>
                           <span className="font-medium text-foreground">Tutor: </span>
                           {playingAnswer ? (
-                            <span className="text-muted-foreground">Listen below—words appear a few at a time.</span>
+                            <span className="text-muted-foreground">Playing—subtitles match phrases below.</span>
                           ) : (
                             lastQa.answer
                           )}
                         </p>
-                        {playingAnswer && answerSubtitleLine ? (
+                        {(playingAnswer || answerPaused) && answerSubtitleLine ? (
                           <div
                             className="flex min-h-[2.75rem] items-center justify-center rounded-lg border border-dashed border-primary/35 bg-primary/5 px-3 py-2 text-center"
                             aria-live="polite"
@@ -1236,16 +1389,25 @@ export default function TutorPage() {
                             </p>
                           </div>
                         ) : null}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="mt-2"
-                          onClick={() => void playAnswerTts(lastQa.answer)}
-                        >
-                          <Volume2 className="mr-2 size-4" />
-                          Hear answer
-                        </Button>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {playingAnswer ? (
+                            <Button type="button" variant="outline" size="sm" onClick={pauseAnswerPlayback}>
+                              <Square className="mr-2 size-4" />
+                              Pause answer
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={questionSubmitting}
+                              onClick={() => void playAnswerTts(lastQa.answer)}
+                            >
+                              <Volume2 className="mr-2 size-4" />
+                              {answerPaused ? "Resume answer" : "Hear answer"}
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     ) : null}
                   </CardContent>
@@ -1260,27 +1422,23 @@ export default function TutorPage() {
                     </span>
                     <Button
                       type="button"
-                      title="Hold to ask the tutor (release to send)"
-                      aria-label={asking ? "Release to send your question" : "Hold to ask the tutor a question"}
+                      title={asking ? "Stop recording and send question" : "Start recording your question"}
+                      aria-label={
+                        asking ? "Stop recording and send your question" : "Start recording your question"
+                      }
                       variant={asking ? "destructive" : "default"}
                       size="icon"
                       className="size-14 rounded-full shadow-lg ring-2 ring-background"
-                      disabled={!camOn}
-                      onPointerDown={(e) => {
-                        if (e.button !== 0) return;
-                        if (!asking) void startAskRecording();
-                      }}
-                      onPointerUp={() => {
-                        if (asking) void stopAskRecording();
-                      }}
-                      onPointerCancel={() => {
-                        if (asking) void stopAskRecording();
-                      }}
-                      onPointerLeave={() => {
-                        if (asking) void stopAskRecording();
-                      }}
+                      disabled={!camOn || questionSubmitting}
+                      onClick={() => void toggleQuestionRecording()}
                     >
-                      {asking ? <Square className="size-6" aria-hidden /> : <Mic className="size-6" aria-hidden />}
+                      {questionSubmitting ? (
+                        <Loader2 className="size-6 animate-spin" aria-hidden />
+                      ) : asking ? (
+                        <Square className="size-6" aria-hidden />
+                      ) : (
+                        <Mic className="size-6" aria-hidden />
+                      )}
                     </Button>
                   </div>
                 </div>
