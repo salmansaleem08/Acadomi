@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import base64
 import os
-import threading
+import traceback
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from io import BytesIO
 
 import cv2
@@ -26,9 +27,10 @@ load_dotenv()
 
 app = FastAPI(title="Acadomi Tutor Service", version="1.0.0")
 
+# FaceMesh must be created and used on the SAME thread. FastAPI runs each sync route on a
+# different thread-pool worker, so we funnel all tracker work through one dedicated thread.
 _trackers: dict[str, FocusTracker] = {}
-# MediaPipe graphs are not thread-safe; FastAPI runs sync routes in a thread pool.
-_face_mesh_lock = threading.Lock()
+_face_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="acadomi_focus")
 
 
 class TtsBody(BaseModel):
@@ -82,6 +84,27 @@ def _to_api_focus(d: dict) -> dict:
     return out
 
 
+def _focus_reset_worker(key: str) -> None:
+    _trackers[key] = FocusTracker()
+
+
+def _focus_analyze_worker(key: str, raw: bytes) -> dict:
+    if key not in _trackers:
+        _trackers[key] = FocusTracker()
+    tracker = _trackers[key]
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        return {
+            "face_found": False,
+            "focus_val": 0,
+            "status": "BAD FRAME",
+            "alarm": False,
+            "is_calibrated": tracker.is_calibrated,
+        }
+    return tracker.process_frame(frame)
+
+
 @app.get("/health")
 def health() -> dict:
     ok, detail = mediapipe_import_ok()
@@ -114,44 +137,33 @@ def tts(body: TtsBody) -> dict:
 def focus_reset(body: FocusResetBody) -> dict:
     key = body.session_key.strip()
     try:
-        _trackers[key] = FocusTracker()
+        fut = _face_exec.submit(_focus_reset_worker, key)
+        fut.result(timeout=120)
     except ImportError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+    except FuturesTimeoutError:
+        raise HTTPException(status_code=504, detail="Focus reset timed out.") from None
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"focus reset failed: {e}") from e
     return {"ok": True}
 
 
 @app.post("/focus/analyze")
 def focus_analyze(body: FocusAnalyzeBody) -> dict:
     key = body.session_key.strip()
-    if key not in _trackers:
-        try:
-            _trackers[key] = FocusTracker()
-        except ImportError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
-    tracker = _trackers[key]
-
     try:
         raw = base64.b64decode(body.image_base64, validate=False)
     except Exception as e:
         raise HTTPException(status_code=400, detail="invalid image_base64") from e
 
-    arr = np.frombuffer(raw, dtype=np.uint8)
-    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if frame is None:
-        return _to_api_focus(
-            {
-                "face_found": False,
-                "focus_val": 0,
-                "status": "BAD FRAME",
-                "alarm": False,
-                "is_calibrated": tracker.is_calibrated,
-            }
-        )
-
     try:
-        with _face_mesh_lock:
-            result = tracker.process_frame(frame)
+        fut = _face_exec.submit(_focus_analyze_worker, key, raw)
+        result = fut.result(timeout=45)
+    except FuturesTimeoutError:
+        raise HTTPException(status_code=504, detail="Focus analysis timed out.") from None
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"focus processing failed: {e}") from e
     return _to_api_focus(result)
 

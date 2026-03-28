@@ -791,8 +791,8 @@ export default function TutorPage() {
               </Card>
             ) : (
               <>
-                <div className="grid gap-4 xl:grid-cols-[1fr_minmax(0,18rem)]">
-                  <Card className="border-border shadow-sm">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)]">
+                  <Card className="min-w-0 border-border shadow-sm">
                     <CardHeader className="pb-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <CardTitle className="text-lg leading-tight">
@@ -816,17 +816,17 @@ export default function TutorPage() {
                             <p className="text-xs font-medium text-muted-foreground">What the tutor is saying</p>
                             <div
                               className={cn(
-                                "flex min-h-[3.25rem] items-center justify-center rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-3 text-center",
+                                "flex min-h-[3rem] items-center justify-center rounded-lg border border-dashed border-border/80 bg-muted/20 px-2 py-2.5 text-center",
                                 playingSlide === slideIndex && narrationSubtitleLine && "border-primary/40 bg-primary/5",
                               )}
                               aria-live="polite"
                             >
-                              <p className="max-w-full truncate text-base font-medium leading-snug text-foreground">
+                              <p className="w-full max-w-full break-words text-sm font-medium leading-snug text-foreground sm:text-base">
                                 {playingSlide === slideIndex && narrationSubtitleLine
                                   ? narrationSubtitleLine
                                   : playingSlide === slideIndex
                                     ? "…"
-                                    : "Press Play narration to listen. A few words at a time will appear here—no full script on screen."}
+                                    : "Tap Play — a few words at a time."}
                               </p>
                             </div>
                           </div>
@@ -905,10 +905,10 @@ export default function TutorPage() {
                     </CardContent>
                   </Card>
 
-                  <div className="space-y-4">
+                  <div className="min-w-0 space-y-4 xl:max-w-[22rem] xl:justify-self-end">
                     <Card
                       className={cn(
-                        "overflow-hidden border-border shadow-sm",
+                        "min-w-0 overflow-hidden border-border shadow-sm",
                         focus?.alarm && "border-destructive ring-1 ring-destructive/40",
                       )}
                     >
